@@ -333,31 +333,26 @@ function HouseholdApp({
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><span className="brand-mark"><ShoppingBasket /></span><span>Pantryhouse</span></div>
-        <nav aria-label="Main navigation">
-          <NavItem to="/pantry" icon={<Refrigerator />} label="Pantry" />
-          <NavItem to="/next-order" icon={<ShoppingCart />} label="Next order" badge={visibleNextOrder.length || undefined} />
-          <NavItem to="/orders" icon={<CircleDollarSign />} label="Orders" badge={activeDraft ? 1 : undefined} />
-          <NavItem to="/household" icon={<Users />} label="Household" />
-        </nav>
-        <div className="sidebar-footer">
-          <Avatar name={context.member.name} />
-          <div><strong>{context.member.name}</strong><span>{context.household.name}</span></div>
-        </div>
-      </aside>
-
       <div className="main-column">
+        <header className="app-header">
+          <div className="brand"><span className="brand-mark"><ShoppingBasket /></span><span>Pantryhouse</span></div>
+          <div className="app-identity">
+            <div><strong>{context.member.name}</strong><span>{context.household.name}</span></div>
+            <Avatar name={context.member.name} small />
+          </div>
+        </header>
+        <nav className="top-nav" aria-label="Main navigation">
+          <NavItem to="/pantry" icon={<Refrigerator />} label="Pantry" compact />
+          <NavItem to="/next-order" icon={<ShoppingCart />} label="Next order" badge={visibleNextOrder.length || undefined} compact />
+          <NavItem to="/orders" icon={<CircleDollarSign />} label="Orders" badge={activeDraft ? 1 : undefined} compact />
+          <NavItem to="/household" icon={<Users />} label="Household" compact />
+        </nav>
         {api.isDemo && (
           <div className="demo-banner"><Sparkles size={16} /><span>Demo data is active. Connect Supabase to share this household.</span></div>
         )}
         {loadError && (
           <div className="error-banner"><AlertTriangle size={18} /><span>{loadError}</span><button onClick={() => void refresh()}>Retry</button></div>
         )}
-        <header className="mobile-header">
-          <div className="brand brand-dark"><span className="brand-mark"><ShoppingBasket /></span><span>Pantryhouse</span></div>
-          <Avatar name={context.member.name} small />
-        </header>
         <main className="page-content" key={location.pathname}>
           <Routes>
             <Route path="/pantry" element={<PantryPage householdId={context.household.id} data={data} perform={perform} notify={notify} />} />
@@ -368,13 +363,6 @@ function HouseholdApp({
           </Routes>
         </main>
       </div>
-
-      <nav className="bottom-nav" aria-label="Main navigation">
-        <NavItem to="/pantry" icon={<Refrigerator />} label="Pantry" compact />
-        <NavItem to="/next-order" icon={<ShoppingCart />} label="Next order" badge={visibleNextOrder.length || undefined} compact />
-        <NavItem to="/orders" icon={<CircleDollarSign />} label="Orders" badge={activeDraft ? 1 : undefined} compact />
-        <NavItem to="/household" icon={<Users />} label="Household" compact />
-      </nav>
 
       <div className="toast-region" aria-live="polite">
         {toasts.map((toast) => <div key={toast.id} className={`toast ${toast.tone}`}>{toast.tone === "success" ? <CheckCircle2 /> : toast.tone === "error" ? <AlertTriangle /> : <Sparkles />}<span>{toast.message}</span></div>)}
@@ -408,35 +396,49 @@ function PantryPage({
     if (filter === "out") return item.quantity <= 0;
     return true;
   });
+  const shelves = Object.entries(
+    filtered.reduce<Record<string, InventoryItem[]>>((groups, item) => {
+      (groups[item.category] ??= []).push(item);
+      return groups;
+    }, {}),
+  ).sort(([left], [right]) => {
+    const leftIndex = CATEGORIES.indexOf(left);
+    const rightIndex = CATEGORIES.indexOf(right);
+    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
 
   return (
     <>
-      <PageHeader eyebrow="SHARED PANTRY" title="What’s at home" action={<button className="button primary" onClick={() => setEditing("new")}><Plus /> Add item</button>} />
-      <section className="metric-grid" aria-label="Pantry summary">
-        <MetricCard icon={<PackageCheck />} value={data.inventory.length} label="items tracked" tone="indigo" />
-        <MetricCard icon={<CalendarDays />} value={expiringCount} label="need using soon" tone="saffron" />
-        <MetricCard icon={<ShoppingBasket />} value={outCount} label="out of stock" tone="tomato" />
-      </section>
-
-      <section className="toolbar">
+      <div className="pantry-filters" role="group" aria-label="Filter pantry">
+        <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All <span>({data.inventory.length})</span></button>
+        <button className={filter === "expiring" ? "active" : ""} onClick={() => setFilter("expiring")}>Expiring <span>({expiringCount})</span></button>
+        <button className={filter === "out" ? "active" : ""} onClick={() => setFilter("out")}>Out <span>({outCount})</span></button>
+      </div>
+      <section className="pantry-toolbar">
         <label className="search-box"><Search size={18} /><span className="sr-only">Search pantry</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search the pantry" /></label>
-        <div className="segmented" role="group" aria-label="Filter pantry">
-          <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>All</button>
-          <button className={filter === "expiring" ? "active" : ""} onClick={() => setFilter("expiring")}>Expiring</button>
-          <button className={filter === "out" ? "active" : ""} onClick={() => setFilter("out")}>Out</button>
-        </div>
+        <button className="button primary" onClick={() => setEditing("new")}><Plus /> Add item</button>
       </section>
 
       {filtered.length ? (
-        <section className="inventory-grid">
-          {filtered.map((item) => (
-            <InventoryCard
-              key={item.id}
-              item={item}
-              onAdjust={(delta) => void perform(() => api.adjustInventory(item.id, delta))}
-              onEdit={() => setEditing(item)}
-              onDelete={() => setDeleteTarget(item)}
-            />
+        <section className="pantry-shelves">
+          {shelves.map(([category, items]) => (
+            <section className="pantry-shelf" key={category}>
+              <header className="shelf-header"><h2>{category}</h2><span>{items.length} {items.length === 1 ? "item" : "items"}</span></header>
+              <div className="shelf-items">
+                {items.map((item) => (
+                  <InventoryCard
+                    key={item.id}
+                    item={item}
+                    onAdjust={(delta) => void perform(() => api.adjustInventory(item.id, delta))}
+                    onEdit={() => setEditing(item)}
+                    onDelete={() => setDeleteTarget(item)}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </section>
       ) : (
@@ -494,7 +496,6 @@ function InventoryCard({ item, onAdjust, onEdit, onDelete }: { item: InventoryIt
     <article className={`inventory-card ${danger ? "danger" : warning ? "warning" : ""}`}>
       <div className="inventory-card-top">
         <div>
-          <span className="category-pill">{item.category}</span>
           <h2>{item.name}</h2>
         </div>
         <div className="menu-actions">
@@ -898,10 +899,6 @@ function PageHeader({ eyebrow, title, action }: { eyebrow: string; title: string
   return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1></div>{action}</header>;
 }
 
-function MetricCard({ icon, value, label, tone }: { icon: ReactNode; value: number; label: string; tone: string }) {
-  return <article className={`metric-card ${tone}`}><div className="metric-icon">{icon}</div><div><strong>{value}</strong><span>{label}</span></div></article>;
-}
-
 function EmptyState({ title, message, action }: { title: string; message: string; action?: ReactNode }) {
   return <section className="empty-state"><img src="./grocery-tote.png" alt="A colourful grocery tote filled with pantry staples" /><div><h2>{title}</h2><p>{message}</p>{action}</div></section>;
 }
@@ -913,7 +910,7 @@ function Avatar({ name, small = false }: { name: string; small?: boolean }) {
 }
 
 function NavItem({ to, icon, label, badge, compact = false }: { to: string; icon: ReactNode; label: string; badge?: number; compact?: boolean }) {
-  return <NavLink to={to} className={({ isActive }) => `${compact ? "bottom-nav-item" : "nav-item"} ${isActive ? "active" : ""}`}>{icon}<span>{label}</span>{badge ? <small className="nav-badge">{badge}</small> : null}</NavLink>;
+  return <NavLink to={to} className={({ isActive }) => `${compact ? "top-nav-item" : "nav-item"} ${isActive ? "active" : ""}`}>{icon}<span>{label}</span>{badge ? <small className="nav-badge">{badge}</small> : null}</NavLink>;
 }
 
 function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
