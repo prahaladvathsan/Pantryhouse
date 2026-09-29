@@ -17,20 +17,21 @@ const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 export const hasSupabaseConfig = Boolean(url && key && !url.includes("your-project"));
 
-const unwrap = <T>(result: { data: T | null; error: { message: string } | null }): T => {
-  if (result.error) throw new Error(result.error.message);
-  if (result.data === null) throw new Error("The server returned no data.");
-  return result.data;
-};
-
 export const createSupabaseApi = (): PantryApi => {
   const client = createClient<Database>(url!, key!, {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
   });
 
-  const rpc = async <T>(fn: string, args: Record<string, unknown> = {}) => {
+  const rpc = async <T>(fn: string, args: Record<string, unknown> = {}): Promise<T | null> => {
     const result = await client.rpc(fn as never, args as never);
-    return unwrap(result as { data: T | null; error: { message: string } | null });
+    if (result.error) throw new Error(result.error.message);
+    return result.data as T | null;
+  };
+
+  const requiredRpc = async <T>(fn: string, args: Record<string, unknown> = {}): Promise<T> => {
+    const data = await rpc<T>(fn, args);
+    if (data === null) throw new Error("The server returned no data.");
+    return data;
   };
 
   const api: PantryApi = {
@@ -44,26 +45,26 @@ export const createSupabaseApi = (): PantryApi => {
       }
     },
     async getContext() {
-      return rpc<HouseholdContext | null>("current_household_context");
+      return rpc<HouseholdContext>("current_household_context");
     },
     async previewInvite(token: string) {
-      return rpc<InvitePreview>("preview_household_invite", { p_token: token });
+      return requiredRpc<InvitePreview>("preview_household_invite", { p_token: token });
     },
     async createHousehold(householdName: string, memberName: string) {
-      return rpc<{ context: HouseholdContext; inviteToken: string }>("create_household", {
+      return requiredRpc<{ context: HouseholdContext; inviteToken: string }>("create_household", {
         p_household_name: householdName,
         p_member_name: memberName,
       });
     },
     async joinHousehold(token: string, memberId: UUID | null, memberName: string | null) {
-      return rpc<HouseholdContext>("join_household", {
+      return requiredRpc<HouseholdContext>("join_household", {
         p_token: token,
         p_member_id: memberId,
         p_member_name: memberName,
       });
     },
     async rotateInvite() {
-      return rpc<string>("rotate_household_invite");
+      return requiredRpc<string>("rotate_household_invite");
     },
     async loadData(householdId: UUID): Promise<DashboardData> {
       const [inventoryResult, nextResult, memberResult, orderResult] = await Promise.all([
@@ -124,7 +125,7 @@ export const createSupabaseApi = (): PantryApi => {
       await rpc("dismiss_next_order_item", { p_item_id: id });
     },
     async startOrder(householdId) {
-      return rpc<UUID>("start_order", { p_household_id: householdId });
+      return requiredRpc<UUID>("start_order", { p_household_id: householdId });
     },
     async cancelOrder(orderId) {
       await rpc("cancel_order", { p_order_id: orderId });
