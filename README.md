@@ -2,6 +2,8 @@
 
 A mobile-first shared pantry, grocery-order, and expense-split app for flatmates.
 
+**Live app:** [prahaladvathsan.github.io/Pantryhouse](https://prahaladvathsan.github.io/Pantryhouse/)
+
 ## What is included
 
 - Shared inventory with quantity controls, expiry warnings, search, and filters
@@ -11,6 +13,7 @@ A mobile-first shared pantry, grocery-order, and expense-split app for flatmates
 - Transactional placed-order review, pantry update, equal splits, and settlement tracking
 - Invite-link household access through Supabase anonymous sessions
 - Household-scoped row-level security and realtime refreshes
+- A Fresh Signal visual system with equal-width top navigation and category-based pantry shelves
 - A realistic in-memory demo whenever Supabase variables are absent
 - GitHub Pages deployment workflow
 
@@ -27,7 +30,15 @@ Without environment variables, the app opens the seeded demo. Demo changes last 
 
 1. Create a Supabase project and enable **Anonymous Sign-Ins** under Authentication settings.
 2. Install the Supabase CLI or use `npx supabase`.
-3. Link this folder to the project and apply `supabase/migrations/202609290001_initial_schema.sql`.
+3. Link this folder to the project and apply all migrations:
+
+   ```powershell
+   npx supabase link --project-ref <project-ref>
+   npx supabase db push
+   ```
+
+   This includes the initial schema and the follow-up trigger-function security fix.
+
 4. Copy `.env.example` to `.env.local` and fill in the project URL and publishable key.
 5. Restart the development server.
 
@@ -36,10 +47,10 @@ Only the public/publishable Supabase key belongs in the browser. Never add a ser
 To refresh generated database types after linking a project:
 
 ```powershell
-npx supabase gen types typescript --linked
+npx supabase gen types typescript --linked > src/database.types.ts
 ```
 
-Save the output as `src/database.types.ts` and use it as the source of truth after future schema migrations.
+Use the generated file as the source of truth after future schema migrations.
 
 ## Verify
 
@@ -63,9 +74,20 @@ npx supabase test db
 
 Vite uses relative assets and hash routes, so invite links work under both repository subpaths and custom domains.
 
+The production deployment currently lives at [prahaladvathsan.github.io/Pantryhouse](https://prahaladvathsan.github.io/Pantryhouse/). Every push to `main` runs the tests and production build before Pages is updated.
+
 ## Important behavior
 
 - The invite link is the household key. Anyone with it can join or select an existing member identity.
 - Anonymous sessions are device-local. If browser data is cleared, use the invite link to rejoin.
 - AI web-prefill URLs are best-effort. Pantryhouse copies the prompt before opening the provider, so the list can always be pasted manually.
+- Pantryhouse does not directly operate Swiggy or Instamart. The v1 integration is a copy-and-open hand-off; direct cart automation depends on official external support.
 - Expense splitting is equal-only in v1; the payer’s own share is marked settled automatically.
+
+## Common Supabase setup errors
+
+- **Invalid path / auth 404:** check that `VITE_SUPABASE_URL` is the exact project URL, including `https://` and `.supabase.co`.
+- **Anonymous sign-ins are disabled:** enable anonymous sign-ins in the project’s Authentication settings.
+- **403 while saving inventory:** run `npx supabase db push` so both migrations are applied, including `202609300001_fix_trigger_function_security.sql`.
+
+See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for the implementation handoff, current product decisions, and sensible next work.
