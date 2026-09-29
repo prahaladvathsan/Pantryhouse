@@ -1,0 +1,3 @@
+-- Pantryhouse ships a realistic in-memory demo when Vite has no Supabase
+-- environment variables. Production household data is intentionally created
+-- through create_household() so every row begins with a valid member session.
