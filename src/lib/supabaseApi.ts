@@ -140,6 +140,9 @@ export const createSupabaseApi = (): PantryApi => {
     async startOrder(householdId) {
       return requiredRpc<UUID>("start_order", { p_household_id: householdId });
     },
+    async startImportOrder(householdId) {
+      return requiredRpc<UUID>("start_import_order", { p_household_id: householdId });
+    },
     async createOrderHandoff(orderId) {
       return requiredRpc<OrderHandoff>("create_order_handoff", { p_order_id: orderId });
     },

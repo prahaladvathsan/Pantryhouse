@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OrderItem } from "../types";
-import { buildOrderPrompt, parseOrderResult } from "./providers";
+import { buildOrderPrompt, buildRecentOrderImportPrompt, parseOrderResult, SWIGGY_CONNECTOR_URL } from "./providers";
 
 const item = (overrides: Partial<OrderItem> = {}): OrderItem => ({
   id: crypto.randomUUID(),
@@ -64,5 +64,21 @@ describe("assistant order handoff", () => {
     expect(prompt).toContain("orderId 11111111-1111-4111-8111-111111111111");
     expect(prompt).toContain(`orderCode ${"a".repeat(64)}`);
     expect(prompt).toContain("If the Pantryhouse connector is unavailable");
+  });
+
+  it("builds a read-only recent Instamart order import", () => {
+    const requested = item();
+    const prompt = buildRecentOrderImportPrompt([requested], {
+      orderId: "11111111-1111-4111-8111-111111111111",
+      code: "b".repeat(64),
+      expiresAt: new Date().toISOString(),
+    });
+
+    expect(prompt).toContain("most recent submitted or completed Swiggy Instamart grocery order");
+    expect(prompt).toContain(`Pantryhouse requestedItemId: ${requested.id}`);
+    expect(prompt).toContain("do not click Reorder, Cancel, Refund, Pay");
+    expect(prompt).toContain("record_order_result exactly once");
+    expect(prompt).toContain("requestedItemId: null");
+    expect(SWIGGY_CONNECTOR_URL).toBe("https://mcp.swiggy.com/instamart");
   });
 });

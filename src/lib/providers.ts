@@ -3,6 +3,9 @@ import { formatMoney, formatQuantity } from "./domain";
 
 export type Provider = "chatgpt" | "claude" | "chatgpt-desktop";
 
+export const SWIGGY_INSTAMART_URL = "https://www.swiggy.com/instamart/";
+export const SWIGGY_CONNECTOR_URL = "https://mcp.swiggy.com/instamart";
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 export const pantryhouseConnectorUrl = supabaseUrl && !supabaseUrl.includes("your-project")
   ? `${supabaseUrl.replace(/\/$/, "")}/functions/v1/pantryhouse-mcp`
@@ -58,6 +61,21 @@ export const buildOrderPrompt = (
     : "After I finish reviewing, end your response with PANTRYHOUSE_ORDER_RESULT followed by only a JSON array. For every selected product include: requestedName, productName, brand, quantity, unit, packageSize, unitPrice, and lineTotal. Prices must be numbers in rupees. This lets me paste the exact purchase back into Pantryhouse.";
 
   return `Add these items to my Swiggy Instamart cart:\n\n${lines}${preferenceBlock}\n\nPlease search for sensible everyday options, ask me about any substitutions, and let me review the cart. Do not place the order or confirm payment.\n\n${returnInstructions}`;
+};
+
+export const buildRecentOrderImportPrompt = (
+  items: Pick<OrderItem, "id" | "name" | "name_key" | "quantity" | "unit" | "bought">[],
+  handoff: OrderHandoff,
+) => {
+  const requestedItems = items
+    .filter((item) => item.bought)
+    .map((item) => `- ${item.name}: ${formatQuantity(item.quantity)} ${item.unit} [Pantryhouse requestedItemId: ${item.id}]`)
+    .join("\n");
+  const requestedBlock = requestedItems
+    ? `\n\nThe Pantryhouse draft originally requested:\n${requestedItems}\nMatch these IDs only when the purchased product clearly corresponds to that request. Use requestedItemId: null for every other product.`
+    : "\n\nThis is an empty import draft, so use requestedItemId: null for every purchased product.";
+
+  return `Find my most recent submitted or completed Swiggy Instamart grocery order. Use the official Swiggy Instamart connector if it is enabled; otherwise use browser access to my signed-in Swiggy account. Do not use a food-delivery, Dineout, cancelled, or refunded order. If more than one order could be the latest, ask me which one. This is read-only: do not click Reorder, Cancel, Refund, Pay, or any button that changes the order.\n\nRead the receipt/order details and capture every purchased line with its exact product name, brand, pack size, quantity, unit price, line total, and the cart total.${requestedBlock}\n\nThen call the Pantryhouse connector tool record_order_result exactly once with orderId ${handoff.orderId} and orderCode ${handoff.code}. Set totalAmount to the cart total in rupees. Include requestedName, productName, brand, packageSize, quantity, unit, unitPrice, lineTotal, and requestedItemId for each product. Prices must be numbers in rupees. Do not repeat the order code in your reply. The tool prepares a draft for my review and must not mark it placed.\n\nIf you cannot access my Swiggy account, ask me to attach the latest Instamart receipt or order screenshots and extract the same fields from them. If the Pantryhouse connector is unavailable, return PANTRYHOUSE_ORDER_RESULT followed by only the equivalent JSON array so I can import it manually.`;
 };
 
 export const parseOrderResult = (value: string): AssistantOrderResult[] => {

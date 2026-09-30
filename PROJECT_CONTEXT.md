@@ -6,7 +6,7 @@ Last updated: 30 September 2026
 
 Pantryhouse v1 is implemented and deployed at [prahaladvathsan.github.io/Pantryhouse](https://prahaladvathsan.github.io/Pantryhouse/). The production app uses Supabase; a seeded in-memory demo is used when the two public Supabase environment variables are absent.
 
-The core loop is present: create or join a household, maintain pantry inventory, populate the Next Order list automatically or manually, snapshot an order, hand it to ChatGPT or Claude, receive or import the assistant’s exact product result, mark the reviewed order as placed, update inventory, learn product preferences, and track equal expense splits.
+The core loop is present: create or join a household, maintain pantry inventory, populate the Next Order list automatically or manually, build a cart with ChatGPT or Claude or shop directly on Swiggy, securely import the assistant’s exact receipt result, mark the reviewed order as placed, update inventory, learn product preferences, and track equal expense splits.
 
 ## Architecture
 
@@ -26,8 +26,10 @@ The database source of truth is `supabase/migrations/`. Apply every migration wi
 - Anonymous sessions are device-local and recover through the invite link rather than email/password recovery.
 - Money is stored as integer paise and split equally; remainder paise are assigned deterministically.
 - Only one draft order may be active. Starting an order snapshots the current list so later additions remain queued.
-- The app never confirms payment or directly modifies a Swiggy cart. It copies a prompt first, then opens an experimental ChatGPT or Claude prefill URL.
-- Claude can return exact cart products through the `pantryhouse-mcp` connector. The connector can only populate an open draft; the user must review and confirm before inventory or history changes.
+- Next Order presents two explicit paths: **Build with AI** snapshots the current list; **Order on Swiggy** opens Instamart and creates or preserves a draft for later receipt import.
+- The Orders page can create an empty import draft and prefill ChatGPT or Claude with a read-only request for the latest Instamart receipt. It prefers Swiggy’s official MCP connector, then signed-in browser access, then user-supplied screenshots.
+- ChatGPT or Claude can return exact cart products through the `pantryhouse-mcp` connector. The connector can only populate an open draft; the user must review and confirm before inventory or history changes.
+- The app never confirms payment. Recent-order prompts explicitly prohibit reorder, cancellation, refunds, payment, and other changes to the Swiggy account.
 - The visual direction is **Fresh Signal + Shelf Map**: deep green, high-visibility fresh-green accents, restrained warm shelf materials, and inventory grouped by category.
 - Pantry consumption uses the whole item card: hold and drag to the consumption target to subtract one, or double-tap to add one. Durable item settings live under the overflow menu; “Stop tracking” is intentionally distinct from consumption.
 - Placed-order items retain the generic pantry tag plus exact product name, brand, pack size, unit and line prices, and thumbs feedback. Future AI prompts derive preferences from this history immediately.
@@ -53,7 +55,7 @@ The Pages workflow currently runs `npm test` and `npm run build` before deployme
 
 ## Known boundaries and likely next work
 
-- Chat provider prefill URLs are best-effort and may change. Claude can return through the configured MCP connector; the structured `PANTRYHOUSE_ORDER_RESULT` paste/import path remains the provider-independent fallback.
-- There is no direct Swiggy Instamart or payment integration. Revisit only when an official, suitably scoped API or MCP capability is available.
+- Chat provider prefill URLs are best-effort and may change. Both ChatGPT and Claude can return through the configured Pantryhouse connector; the structured `PANTRYHOUSE_ORDER_RESULT` paste/import path remains the provider-independent fallback.
+- Swiggy’s official Instamart MCP endpoint is `https://mcp.swiggy.com/instamart`. Account access and cart/order data stay with the selected assistant; Pantryhouse receives only the reviewed structured result and never receives Swiggy credentials.
 - Browser-level end-to-end coverage, two-session realtime testing, and a broader accessibility audit remain worthwhile hardening work.
 - Future visual work should extend the Fresh Signal + Shelf Map language to Next Order, Orders, and Household without restoring dashboard-style metric cards or generic AI-generated gradients.

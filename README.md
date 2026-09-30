@@ -9,7 +9,8 @@ A mobile-first shared pantry, grocery-order, and expense-split app for flatmates
 - Shared inventory with whole-card consumption/restock gestures, expiry warnings, search, and filters
 - Automatic restocking for empty or expired recurring items
 - Collaborative Next Order list with name-based deduplication
-- Claude cart hand-off with a direct, single-order connector, learned product preferences, and a copy-first fallback
+- Two order paths: build a cart with ChatGPT or Claude, or shop directly on Swiggy Instamart
+- Secure recent-order import through the Pantryhouse connector, with exact receipt details and a copy-first fallback
 - Exact purchased-product history with brand, pack size, price, and thumbs up/down feedback
 - Transactional placed-order review, pantry update, equal splits, and settlement tracking
 - Invite-link household access through Supabase anonymous sessions
@@ -38,7 +39,7 @@ Without environment variables, the app opens the seeded demo. Demo changes last 
    npx supabase db push
    ```
 
-   This includes the initial schema, the trigger-function security fix, product history, and secure assistant hand-off.
+   This includes the initial schema, the trigger-function security fix, product history, secure assistant hand-off, and empty import drafts for externally placed orders.
 
 4. Deploy the Pantryhouse connector:
 
@@ -46,7 +47,7 @@ Without environment variables, the app opens the seeded demo. Demo changes last 
    npx supabase functions deploy pantryhouse-mcp --no-verify-jwt
    ```
 
-   The endpoint is public so Claude can discover the tool, but it cannot read household data. Every write requires a random, two-hour, single-order code created by an authenticated Pantryhouse member. The service-role credential remains inside the Edge Function.
+   The endpoint is public so ChatGPT or Claude can discover the tool, but it cannot read household data. Every write requires a random, two-hour, single-order code created by an authenticated Pantryhouse member. The service-role credential remains inside the Edge Function.
 
 5. Copy `.env.example` to `.env.local` and fill in the project URL and publishable key.
 6. Restart the development server.
@@ -90,11 +91,14 @@ The production deployment currently lives at [prahaladvathsan.github.io/Pantryho
 - The invite link is the household key. Anyone with it can join or select an existing member identity.
 - Anonymous sessions are device-local. If browser data is cleared, use the invite link to rejoin.
 - AI web-prefill URLs are best-effort. Pantryhouse copies the prompt before opening the provider, so the list can always be pasted manually.
-- For direct return, add `https://<project-ref>.supabase.co/functions/v1/pantryhouse-mcp` once under Claude **Settings → Connectors → Add custom connector**. Opening Claude from an order creates an expiring capability that can populate only that draft.
-- Claude can populate exact products and the cart total, but cannot place the purchase, confirm payment, or update pantry inventory. A household member must review and confirm the draft in Pantryhouse.
+- **Build with AI** snapshots the Next Order list and opens ChatGPT or Claude. **Order on Swiggy** opens Instamart directly and keeps a Pantryhouse draft ready for the receipt.
+- **Import recent order** opens a read-only prompt that asks ChatGPT or Claude to find the latest Instamart order and register its exact products, brands, pack sizes, quantities, and prices.
+- For direct return, add `https://<project-ref>.supabase.co/functions/v1/pantryhouse-mcp` once. In Claude use **Settings → Connectors → Add custom connector**; in ChatGPT enable developer mode and use **Plugins → +**. Opening either assistant creates an expiring capability that can populate only that draft.
+- Swiggy’s optional official Instamart connector is `https://mcp.swiggy.com/instamart`. Without it, the prompt asks the assistant to use an already signed-in browser or request receipt screenshots.
+- The assistant can populate exact products and the cart total, but cannot confirm payment or update pantry inventory. Recent-order imports explicitly forbid reorder, cancellation, refunds, payment, and other Swiggy mutations. A household member must review and confirm the draft in Pantryhouse.
 - If the connector is unavailable, the prompt asks for the existing structured `PANTRYHOUSE_ORDER_RESULT`; paste that block into the placed-order review to import the same details.
 - Product feedback is retained against the pantry item type. Liked, disliked, and most recently purchased products are included in future order prompts immediately.
-- Pantryhouse does not directly operate Swiggy or Instamart. The v1 integration is a copy-and-open hand-off; direct cart automation depends on official external support.
+- Pantryhouse does not receive Swiggy account credentials and does not operate payment. Swiggy access stays inside the user-selected assistant through Swiggy’s official connector, browser access, or user-supplied screenshots.
 - Expense splitting is equal-only in v1; the payer’s own share is marked settled automatically.
 
 ## Common Supabase setup errors

@@ -66,6 +66,7 @@ export type Database = {
       add_manual_next_order: { Args: { p_household_id: string; p_name: string; p_quantity: number; p_unit: string }; Returns: string };
       dismiss_next_order_item: { Args: { p_item_id: string }; Returns: undefined };
       start_order: { Args: { p_household_id: string }; Returns: string };
+      start_import_order: { Args: { p_household_id: string }; Returns: string };
       create_order_handoff: { Args: { p_order_id: string }; Returns: Json };
       submit_order_capture: { Args: { p_order_id: string; p_code: string; p_total_amount_paise: number | null; p_items: Json }; Returns: Json };
       cancel_order: { Args: { p_order_id: string }; Returns: undefined };

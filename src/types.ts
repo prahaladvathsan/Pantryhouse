@@ -165,6 +165,7 @@ export interface PantryApi {
   updateNextOrder(id: UUID, quantity: number, unit: string): Promise<void>;
   dismissNextOrder(id: UUID): Promise<void>;
   startOrder(householdId: UUID): Promise<UUID>;
+  startImportOrder(householdId: UUID): Promise<UUID>;
   createOrderHandoff(orderId: UUID): Promise<OrderHandoff>;
   cancelOrder(orderId: UUID): Promise<void>;
   placeOrder(input: PlacementInput): Promise<void>;

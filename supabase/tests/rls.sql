@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(11);
+select plan(12);
 
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","role":"authenticated","is_anonymous":true}', true);
@@ -33,6 +33,11 @@ select throws_ok(
   $$select public.sync_next_order('11111111-1111-4111-8111-111111111111'::uuid)$$,
   'Household access denied',
   'outsider cannot run a household mutation'
+);
+select throws_ok(
+  $$select public.start_import_order('11111111-1111-4111-8111-111111111111'::uuid)$$,
+  'Household access denied',
+  'outsider cannot create an external-order import draft'
 );
 select throws_ok(
   $$select public.create_order_handoff((select order_id from test_order))$$,

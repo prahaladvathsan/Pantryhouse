@@ -60,7 +60,16 @@ import {
   normaliseName,
   splitPaise,
 } from "./lib/domain";
-import { buildOrderPrompt, pantryhouseConnectorUrl, parseOrderResult, providerUrl, type Provider } from "./lib/providers";
+import {
+  buildOrderPrompt,
+  buildRecentOrderImportPrompt,
+  pantryhouseConnectorUrl,
+  parseOrderResult,
+  providerUrl,
+  SWIGGY_CONNECTOR_URL,
+  SWIGGY_INSTAMART_URL,
+  type Provider,
+} from "./lib/providers";
 import { householdSchema, inventorySchema, manualOrderSchema, placementSchema } from "./lib/schemas";
 import { registerPantryTools } from "./lib/webmcp";
 import type {
@@ -745,7 +754,7 @@ function NextOrderPage({ context, data, activeDraft, perform, notify }: {
     event.currentTarget.reset();
   };
 
-  const start = async () => {
+  const buildWithAi = async () => {
     try {
       const orderId = await api.startOrder(context.household.id);
       const fresh = await api.loadData(context.household.id);
@@ -757,13 +766,28 @@ function NextOrderPage({ context, data, activeDraft, perform, notify }: {
     }
   };
 
+  const orderOnSwiggy = async () => {
+    try {
+      if (!activeDraft) {
+        if (visible.length) await api.startOrder(context.household.id);
+        else await api.startImportOrder(context.household.id);
+      }
+      window.location.assign(SWIGGY_INSTAMART_URL);
+    } catch (cause) {
+      notify(messageOf(cause), "error");
+    }
+  };
+
+  const hasDraftItems = activeDraft?.order_items.some((item) => item.bought) ?? false;
+  const canBuildWithAi = activeDraft ? hasDraftItems : visible.length > 0;
+
   return (
     <>
-      <PageHeader title="Ready to order?" action={<button className="button primary" onClick={() => void start()} disabled={!visible.length && !activeDraft}><ShoppingCart /> {activeDraft ? "Open order" : "Start order"}</button>} />
+      <PageHeader title="Ready to order?" action={<div className="order-path-actions"><button className="button primary" onClick={() => void buildWithAi()} disabled={!canBuildWithAi}><Bot /> Build with AI</button><button className="button secondary" onClick={() => void orderOnSwiggy()}><ExternalLink /> Order on Swiggy</button></div>} />
       {activeDraft && (
         <section className="draft-banner">
           <div className="draft-icon">{activeDraft.assistant_capture_received_at ? <Sparkles /> : <Clock3 />}</div>
-          <div><strong>{activeDraft.assistant_capture_received_at ? "Claude’s products are ready" : "An order is in progress"}</strong><span>{activeDraft.assistant_capture_received_at ? `${activeDraft.order_items.filter((item) => item.bought && item.product_name).length} exact products received · review before confirming` : `Started ${relativeTime(activeDraft.started_at)} · new additions stay in the next run`}</span></div>
+          <div><strong>{activeDraft.assistant_capture_received_at ? "Exact products are ready" : "An order is in progress"}</strong><span>{activeDraft.assistant_capture_received_at ? `${activeDraft.order_items.filter((item) => item.bought && item.product_name).length} exact products received · review before confirming` : `Started ${relativeTime(activeDraft.started_at)} · new additions stay in the next run`}</span></div>
           <button className="button secondary" onClick={() => navigate("/orders")}>Review order</button>
         </section>
       )}
@@ -780,7 +804,6 @@ function NextOrderPage({ context, data, activeDraft, perform, notify }: {
         <section className="order-list">
           <div className="list-heading"><span>{visible.length} {visible.length === 1 ? "item" : "items"}</span><span>Everyone can edit this list</span></div>
           {visible.map((item) => <NextOrderRow key={item.id} item={item} perform={perform} />)}
-          <div className="order-list-footer"><div><strong>Ready to shop?</strong><span>We’ll copy a clean list and open your AI assistant.</span></div><button className="button primary large" onClick={() => void start()}><Bot /> Start order</button></div>
         </section>
       ) : (
         <EmptyState title="The next order is clear" message="Manual additions and depleted recurring items will gather here." />
@@ -819,13 +842,14 @@ function HandoffDialog({ order, history, onClose, notify }: { order: Order; hist
   const open = async (provider: Provider) => {
     setOpening(provider);
     try {
-      const nextPrompt = provider === "claude" && !api.isDemo
+      const supportsDirectReturn = provider !== "chatgpt-desktop" && !api.isDemo;
+      const nextPrompt = supportsDirectReturn
         ? buildOrderPrompt(order.order_items, history, await api.createOrderHandoff(order.id))
         : fallbackPrompt;
       setPrompt(nextPrompt);
       try {
         await navigator.clipboard.writeText(nextPrompt);
-        notify(provider === "claude" && !api.isDemo ? "Secure return enabled for this order." : "List copied. Paste it if the prompt does not appear.", "info");
+        notify(supportsDirectReturn ? "Secure return enabled for this order." : "List copied. Paste it if the prompt does not appear.", "info");
       } catch {
         notify("Couldn’t copy automatically. Select and copy the prompt below.", "error");
       }
@@ -846,18 +870,71 @@ function HandoffDialog({ order, history, onClose, notify }: { order: Order; hist
   };
   return (
     <Modal title="Hand off your order" onClose={onClose} wide>
-      <p className="dialog-lead">Claude can send the exact cart back to this draft automatically. You will still review it before Pantryhouse records the order.</p>
+      <p className="dialog-lead">Your AI assistant can send the exact cart back to this draft automatically. You will still review it before Pantryhouse records the order.</p>
       {pantryhouseConnectorUrl && <section className="connector-setup">
-        <div><Sparkles /><span><strong>One-time Claude setup</strong><small>In Claude, open Settings → Connectors → Add custom connector, paste this URL, and enable Pantryhouse in the shopping chat.</small></span></div>
+        <div><Sparkles /><span><strong>One-time AI setup</strong><small>Claude: Settings → Connectors → Add custom connector. ChatGPT: enable developer mode, then Plugins → +. Add Pantryhouse using this URL.</small></span></div>
         <div className="connector-url"><input readOnly value={pantryhouseConnectorUrl} onFocus={(event) => event.currentTarget.select()} /><button className="button secondary compact-button" onClick={() => void copyConnectorUrl()}><Copy /> Copy URL</button></div>
       </section>}
       <div className="provider-grid">
-        <button className="provider-card chatgpt" disabled={opening !== null} onClick={() => void open("chatgpt")}><span className="provider-icon">◎</span><span><strong>Open ChatGPT</strong><small>Copy-and-import fallback</small></span>{opening === "chatgpt" ? <Loader2 className="spin" /> : <ExternalLink />}</button>
+        <button className="provider-card chatgpt" disabled={opening !== null} onClick={() => void open("chatgpt")}><span className="provider-icon">◎</span><span><strong>Open ChatGPT</strong><small>{api.isDemo ? "Copy-and-import demo" : "Direct, secure return"}</small></span>{opening === "chatgpt" ? <Loader2 className="spin" /> : <ExternalLink />}</button>
         <button className="provider-card claude" disabled={opening !== null} onClick={() => void open("claude")}><span className="provider-icon">AI</span><span><strong>Open Claude</strong><small>{api.isDemo ? "Copy-and-import demo" : "Direct, secure return"}</small></span>{opening === "claude" ? <Loader2 className="spin" /> : <ExternalLink />}</button>
       </div>
       <button className="text-button" disabled={opening !== null} onClick={() => void open("chatgpt-desktop")}><Bot /> Open in the ChatGPT desktop app instead</button>
       <label className="prompt-preview"><span>Copied prompt</span><textarea readOnly value={prompt} onFocus={(event) => event.currentTarget.select()} /></label>
-      <div className="info-callout"><Clipboard /><span>The order code expires after two hours and can update only this draft. If the connector is unavailable, Claude will provide the existing pasteable fallback.</span></div>
+      <div className="info-callout"><Clipboard /><span>The order code expires after two hours and can update only this draft. If the connector is unavailable, the assistant will provide the existing pasteable fallback.</span></div>
+    </Modal>
+  );
+}
+
+function RecentOrderImportDialog({ order, onClose, notify }: { order: Order; onClose: () => void; notify: (message: string, tone?: Toast["tone"]) => void }) {
+  const [prompt, setPrompt] = useState("");
+  const [opening, setOpening] = useState<Provider | null>(null);
+
+  const copyValue = async (value: string, success: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      notify(success, "info");
+    } catch {
+      notify("Couldn’t copy automatically. Select and copy the URL instead.", "error");
+    }
+  };
+
+  const open = async (provider: Extract<Provider, "chatgpt" | "claude">) => {
+    setOpening(provider);
+    try {
+      const handoff = await api.createOrderHandoff(order.id);
+      const nextPrompt = buildRecentOrderImportPrompt(order.order_items, handoff);
+      setPrompt(nextPrompt);
+      try {
+        await navigator.clipboard.writeText(nextPrompt);
+        notify("Import prompt copied and secure return enabled.", "info");
+      } catch {
+        notify("Secure return enabled. The prompt will still be opened for you.", "info");
+      }
+      window.location.href = providerUrl(provider, nextPrompt);
+    } catch (cause) {
+      notify(messageOf(cause), "error");
+      setOpening(null);
+    }
+  };
+
+  return (
+    <Modal title="Import your recent Instamart order" onClose={onClose} wide>
+      <p className="dialog-lead">Choose an assistant. Pantryhouse will prefill a read-only prompt asking it to find your latest Instamart receipt and send the exact products into this draft for review.</p>
+      <div className="provider-grid">
+        <button className="provider-card chatgpt" disabled={opening !== null} onClick={() => void open("chatgpt")}><span className="provider-icon">◎</span><span><strong>Open ChatGPT</strong><small>Find and register latest order</small></span>{opening === "chatgpt" ? <Loader2 className="spin" /> : <ExternalLink />}</button>
+        <button className="provider-card claude" disabled={opening !== null} onClick={() => void open("claude")}><span className="provider-icon">AI</span><span><strong>Open Claude</strong><small>Find and register latest order</small></span>{opening === "claude" ? <Loader2 className="spin" /> : <ExternalLink />}</button>
+      </div>
+      {pantryhouseConnectorUrl && <section className="connector-setup connector-stack">
+        <div><Sparkles /><span><strong>Connect the two services once</strong><small>Add Pantryhouse so the assistant can return the receipt, and optionally add Swiggy’s official Instamart connector so it can read the order directly.</small></span></div>
+        <label className="connector-label">Pantryhouse connector</label>
+        <div className="connector-url"><input readOnly value={pantryhouseConnectorUrl} onFocus={(event) => event.currentTarget.select()} /><button className="button secondary compact-button" onClick={() => void copyValue(pantryhouseConnectorUrl!, "Pantryhouse connector URL copied")}><Copy /> Copy</button></div>
+        <label className="connector-label">Official Swiggy Instamart connector</label>
+        <div className="connector-url"><input readOnly value={SWIGGY_CONNECTOR_URL} onFocus={(event) => event.currentTarget.select()} /><button className="button secondary compact-button" onClick={() => void copyValue(SWIGGY_CONNECTOR_URL, "Swiggy connector URL copied")}><Copy /> Copy</button></div>
+        <small className="connector-help">Claude: Settings → Connectors → Add custom connector. ChatGPT: enable developer mode, then Plugins → +. If Swiggy cannot be connected, let the assistant use your signed-in browser or attach receipt screenshots when it asks.</small>
+      </section>}
+      {prompt && <label className="prompt-preview"><span>Copied prompt</span><textarea readOnly value={prompt} onFocus={(event) => event.currentTarget.select()} /></label>}
+      <div className="info-callout"><Clipboard /><span>The assistant is told not to reorder, cancel, refund, pay, or make any other change in Swiggy. The one-time Pantryhouse code expires after two hours.</span></div>
     </Modal>
   );
 }
@@ -871,20 +948,37 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
 }) {
   const [placing, setPlacing] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
+  const [recentImport, setRecentImport] = useState<Order | null>(null);
+  const [importingRecent, setImportingRecent] = useState(false);
   const placed = data.orders.filter((order) => order.status === "placed");
   const exactProducts = placed.flatMap((order) => order.order_items).filter((item) => item.bought && item.product_name);
   const capturedProducts = activeDraft?.order_items.filter((item) => item.bought && item.product_name).length ?? 0;
+  const draftBoughtItems = activeDraft?.order_items.filter((item) => item.bought) ?? [];
+  const importRecent = async () => {
+    setImportingRecent(true);
+    try {
+      const orderId = activeDraft?.id ?? await api.startImportOrder(context.household.id);
+      const fresh = await api.loadData(context.household.id);
+      const order = fresh.orders.find((candidate) => candidate.id === orderId);
+      if (!order) throw new Error("The import draft could not be opened.");
+      setRecentImport(order);
+    } catch (cause) {
+      notify(messageOf(cause), "error");
+    } finally {
+      setImportingRecent(false);
+    }
+  };
   return (
     <>
-      <PageHeader title="Past orders (and splits)" />
+      <PageHeader title="Past orders (and splits)" action={<button className="button secondary" disabled={importingRecent} onClick={() => void importRecent()}>{importingRecent ? <Loader2 className="spin" /> : <FileInput />} Import recent order</button>} />
       {activeDraft && (
         <section className={`active-order-card ${activeDraft.assistant_capture_received_at ? "capture-ready" : ""}`}>
           <div className="active-order-header">
-            <div><span className="status-pill">{activeDraft.assistant_capture_received_at ? "READY TO REVIEW" : "IN PROGRESS"}</span><h2>{activeDraft.assistant_capture_received_at ? "Claude sent the exact products" : "Current grocery order"}</h2><p>{activeDraft.assistant_capture_received_at ? `${capturedProducts} products received ${relativeTime(activeDraft.assistant_capture_received_at)}` : `${activeDraft.order_items.length} items · started ${relativeTime(activeDraft.started_at)}`}</p></div>
+            <div><span className="status-pill">{activeDraft.assistant_capture_received_at ? "READY TO REVIEW" : "IN PROGRESS"}</span><h2>{activeDraft.assistant_capture_received_at ? "Exact products received" : "Current grocery order"}</h2><p>{activeDraft.assistant_capture_received_at ? `${capturedProducts} products received ${relativeTime(activeDraft.assistant_capture_received_at)}` : `${activeDraft.order_items.length} items · started ${relativeTime(activeDraft.started_at)}`}</p></div>
             {activeDraft.assistant_capture_received_at ? <Sparkles size={42} /> : <ShoppingCart size={42} />}
           </div>
-          <div className="item-chip-list">{activeDraft.order_items.filter((item) => item.bought).slice(0, 6).map((item) => <span key={item.id}>{item.product_name || item.name} · {formatQuantity(item.quantity)} {item.unit}</span>)}</div>
-          <div className="button-row"><button className="button primary" onClick={() => setPlacing(true)}>{activeDraft.assistant_capture_received_at ? <Sparkles /> : <PackageCheck />} {activeDraft.assistant_capture_received_at ? "Review products" : "Mark placed"}</button><button className="button ghost danger-text" onClick={() => setCancelTarget(activeDraft)}>Cancel order</button></div>
+          <div className="item-chip-list">{draftBoughtItems.length ? draftBoughtItems.slice(0, 6).map((item) => <span key={item.id}>{item.product_name || item.name} · {formatQuantity(item.quantity)} {item.unit}</span>) : <span>Waiting for a recent order to be imported</span>}</div>
+          <div className="button-row"><button className="button primary" onClick={() => draftBoughtItems.length ? setPlacing(true) : void importRecent()}>{draftBoughtItems.length ? (activeDraft.assistant_capture_received_at ? <Sparkles /> : <PackageCheck />) : <FileInput />} {draftBoughtItems.length ? (activeDraft.assistant_capture_received_at ? "Review products" : "Mark placed") : "Import recent order"}</button><button className="button ghost danger-text" onClick={() => setCancelTarget(activeDraft)}>Cancel order</button></div>
         </section>
       )}
 
@@ -898,6 +992,7 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
         await perform(() => api.placeOrder(input), "Order placed and pantry updated");
         setPlacing(false);
       }} notify={notify} />}
+      {recentImport && <RecentOrderImportDialog order={recentImport} onClose={() => setRecentImport(null)} notify={notify} />}
       {cancelTarget && <ConfirmDialog title="Cancel this order?" message="The snapshot will be released back to Next Order. Nothing in the pantry will change." confirmLabel="Cancel order" onClose={() => setCancelTarget(null)} onConfirm={async () => {
         await perform(() => api.cancelOrder(cancelTarget.id), "Order cancelled");
         setCancelTarget(null);
@@ -1035,7 +1130,7 @@ function PlaceOrderDialog({ order, members, onClose, onPlaced, notify }: {
   return (
     <Modal title="Review placed order" onClose={onClose} wide>
       <p className="dialog-lead">Confirm what came home. Pantry item names drive stock; exact products, brands, sizes, and prices build your household’s preferences.</p>
-      {order.assistant_capture_received_at && <div className="capture-callout"><Sparkles /><span><strong>Received directly from Claude</strong><small>Check the products and prices below. Nothing enters pantry history until you confirm.</small></span></div>}
+      {order.assistant_capture_received_at && <div className="capture-callout"><Sparkles /><span><strong>Received directly from your AI assistant</strong><small>Check the products and prices below. Nothing enters pantry history until you confirm.</small></span></div>}
       <details className="assistant-import">
         <summary><FileInput /> Import the assistant’s exact products</summary>
         <p>Paste the <strong>PANTRYHOUSE_ORDER_RESULT</strong> block from ChatGPT or Claude. You can also fill the product fields below by hand.</p>

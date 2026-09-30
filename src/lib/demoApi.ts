@@ -275,6 +275,27 @@ export const demoApi: PantryApi = {
     emit();
     return orderId;
   },
+  async startImportOrder() {
+    const currentDraft = orders.find((order) => order.status === "draft");
+    if (currentDraft) return currentDraft.id;
+    const orderId = id();
+    orders.unshift({
+      id: orderId,
+      household_id: houseId,
+      status: "draft",
+      placed_by_member_id: context.member.id,
+      total_amount_paise: null,
+      started_at: now(),
+      placed_at: null,
+      cancelled_at: null,
+      assistant_capture_received_at: null,
+      assistant_capture_total_amount_paise: null,
+      order_items: [],
+      order_splits: [],
+    });
+    emit();
+    return orderId;
+  },
   async createOrderHandoff(orderId) {
     const order = orders.find((candidate) => candidate.id === orderId);
     if (!order || order.status !== "draft") throw new Error("This order is no longer open.");
