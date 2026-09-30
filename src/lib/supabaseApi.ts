@@ -105,6 +105,18 @@ export const createSupabaseApi = (): PantryApi => {
       await api.syncNextOrder(householdId);
     },
     async deleteInventory(id) {
+      const related = await client.from("next_order_items").select("id, source_manual").eq("inventory_item_id", id);
+      if (related.error) throw new Error(related.error.message);
+      const manualIds = (related.data ?? []).filter((item) => item.source_manual).map((item) => item.id);
+      const automaticIds = (related.data ?? []).filter((item) => !item.source_manual).map((item) => item.id);
+      if (manualIds.length) {
+        const kept = await client.from("next_order_items").update({ inventory_item_id: null, source_auto: false }).in("id", manualIds);
+        if (kept.error) throw new Error(kept.error.message);
+      }
+      if (automaticIds.length) {
+        const removed = await client.from("next_order_items").delete().in("id", automaticIds);
+        if (removed.error) throw new Error(removed.error.message);
+      }
       const result = await client.from("inventory_items").delete().eq("id", id);
       if (result.error) throw new Error(result.error.message);
     },
@@ -137,6 +149,9 @@ export const createSupabaseApi = (): PantryApi => {
         p_participant_ids: input.participantIds,
         p_items: input.items,
       });
+    },
+    async rateOrderItem(orderItemId, feedback) {
+      await rpc("rate_order_item", { p_order_item_id: orderItemId, p_feedback: feedback });
     },
     async setSplitSettled(orderId, memberId, settled) {
       await rpc("set_split_settled", { p_order_id: orderId, p_member_id: memberId, p_settled: settled });

@@ -9,6 +9,7 @@ import type {
   Order,
   PantryApi,
   PlacementInput,
+  ProductFeedback,
   UUID,
 } from "../types";
 import { addDays, isExpired, normaliseName, shouldAutoOrder, splitPaise } from "./domain";
@@ -188,6 +189,13 @@ export const demoApi: PantryApi = {
   async deleteInventory(itemId: string) {
     inventory = inventory.filter((item) => item.id !== itemId);
     nextOrder = nextOrder.filter((item) => item.inventory_item_id !== itemId || item.source_manual);
+    nextOrder.forEach((item) => {
+      if (item.inventory_item_id === itemId) {
+        item.inventory_item_id = null;
+        item.source_auto = false;
+        item.updated_at = now();
+      }
+    });
     emit();
   },
   async adjustInventory(itemId: string, delta: number) {
@@ -257,6 +265,7 @@ export const demoApi: PantryApi = {
         name: item.name, name_key: item.name_key, quantity: item.quantity, unit: item.unit,
         category: inventory.find((inv) => inv.id === item.inventory_item_id)?.category ?? "Other",
         expiry_date: addDays(new Date(), inventory.find((inv) => inv.id === item.inventory_item_id)?.default_expiry_days ?? 7),
+        product_name: null, brand: null, package_size: null, unit_price_paise: null, line_total_paise: null, feedback: 0,
         bought: true, source: "next_order",
       })),
       order_splits: [],
@@ -275,7 +284,7 @@ export const demoApi: PantryApi = {
   async placeOrder(input: PlacementInput) {
     const order = orders.find((candidate) => candidate.id === input.orderId);
     if (!order || order.status !== "draft") throw new Error("This order is no longer open.");
-    order.order_items = input.items.map((item) => ({ ...item, id: id(), order_id: order.id, name_key: normaliseName(item.name) }));
+    order.order_items = input.items.map((item) => ({ ...item, id: id(), order_id: order.id, name_key: normaliseName(item.name), feedback: 0 }));
     for (const item of input.items.filter((candidate) => candidate.bought)) {
       const key = normaliseName(item.name);
       const existing = inventory.find((candidate) => candidate.id === item.inventory_item_id || candidate.name_key === key);
@@ -308,6 +317,12 @@ export const demoApi: PantryApi = {
       member,
     }));
     sync();
+    emit();
+  },
+  async rateOrderItem(orderItemId: string, feedback: ProductFeedback) {
+    const item = orders.flatMap((order) => order.order_items).find((candidate) => candidate.id === orderItemId);
+    if (!item) throw new Error("Order item not found.");
+    item.feedback = feedback;
     emit();
   },
   async setSplitSettled(orderId, memberId, settled) {

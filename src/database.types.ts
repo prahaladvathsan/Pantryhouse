@@ -32,7 +32,7 @@ export type Database = {
       next_order_items: {
         Row: { id: string; household_id: string; inventory_item_id: string | null; name: string; name_key: string; quantity: number; unit: string; source_auto: boolean; source_manual: boolean; dismissed: boolean; locked_order_id: string | null; added_by_member_id: string | null; created_at: string; updated_at: string };
         Insert: { id?: string; household_id: string; inventory_item_id?: string | null; name: string; name_key: string; quantity: number; unit: string; source_auto?: boolean; source_manual?: boolean; dismissed?: boolean; locked_order_id?: string | null; added_by_member_id?: string | null; created_at?: string; updated_at?: string };
-        Update: { quantity?: number; unit?: string; source_auto?: boolean; source_manual?: boolean; dismissed?: boolean; locked_order_id?: string | null; updated_at?: string };
+        Update: { inventory_item_id?: string | null; quantity?: number; unit?: string; source_auto?: boolean; source_manual?: boolean; dismissed?: boolean; locked_order_id?: string | null; updated_at?: string };
         Relationships: [];
       };
       orders: {
@@ -42,9 +42,9 @@ export type Database = {
         Relationships: [];
       };
       order_items: {
-        Row: { id: string; household_id: string; order_id: string; inventory_item_id: string | null; next_order_item_id: string | null; name: string; name_key: string; quantity: number; unit: string; category: string; expiry_date: string | null; bought: boolean; source: Database["public"]["Enums"]["order_item_source"]; created_at: string };
-        Insert: { id?: string; household_id: string; order_id: string; inventory_item_id?: string | null; next_order_item_id?: string | null; name: string; name_key: string; quantity: number; unit: string; category?: string; expiry_date?: string | null; bought?: boolean; source?: Database["public"]["Enums"]["order_item_source"]; created_at?: string };
-        Update: { bought?: boolean; quantity?: number; unit?: string; category?: string; expiry_date?: string | null };
+        Row: { id: string; household_id: string; order_id: string; inventory_item_id: string | null; next_order_item_id: string | null; name: string; name_key: string; quantity: number; unit: string; category: string; expiry_date: string | null; product_name: string | null; brand: string | null; package_size: string | null; unit_price_paise: number | null; line_total_paise: number | null; feedback: number; bought: boolean; source: Database["public"]["Enums"]["order_item_source"]; created_at: string };
+        Insert: { id?: string; household_id: string; order_id: string; inventory_item_id?: string | null; next_order_item_id?: string | null; name: string; name_key: string; quantity: number; unit: string; category?: string; expiry_date?: string | null; product_name?: string | null; brand?: string | null; package_size?: string | null; unit_price_paise?: number | null; line_total_paise?: number | null; feedback?: number; bought?: boolean; source?: Database["public"]["Enums"]["order_item_source"]; created_at?: string };
+        Update: { bought?: boolean; quantity?: number; unit?: string; category?: string; expiry_date?: string | null; product_name?: string | null; brand?: string | null; package_size?: string | null; unit_price_paise?: number | null; line_total_paise?: number | null; feedback?: number };
         Relationships: [];
       };
       order_splits: {
@@ -68,6 +68,7 @@ export type Database = {
       start_order: { Args: { p_household_id: string }; Returns: string };
       cancel_order: { Args: { p_order_id: string }; Returns: undefined };
       place_order: { Args: { p_order_id: string; p_total_amount_paise: number; p_participant_ids: string[]; p_items: Json }; Returns: undefined };
+      rate_order_item: { Args: { p_order_item_id: string; p_feedback: number }; Returns: undefined };
       set_split_settled: { Args: { p_order_id: string; p_member_id: string; p_settled: boolean }; Returns: undefined };
     };
     Enums: {

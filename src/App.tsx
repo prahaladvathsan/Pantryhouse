@@ -12,10 +12,11 @@ import {
   Copy,
   Edit3,
   ExternalLink,
+  FileInput,
+  GripVertical,
   Home,
   House,
   Loader2,
-  Minus,
   MoreHorizontal,
   PackageCheck,
   Plus,
@@ -26,20 +27,26 @@ import {
   ShoppingBasket,
   ShoppingCart,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
+  Utensils,
   Users,
   X,
 } from "lucide-react";
 import {
   type ChangeEvent,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type TouchEvent as ReactTouchEvent,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "./lib/api";
 import {
@@ -50,9 +57,10 @@ import {
   formatQuantity,
   isExpired,
   isExpiringSoon,
+  normaliseName,
   splitPaise,
 } from "./lib/domain";
-import { buildOrderPrompt, providerUrl, type Provider } from "./lib/providers";
+import { buildOrderPrompt, parseOrderResult, providerUrl, type Provider } from "./lib/providers";
 import { householdSchema, inventorySchema, manualOrderSchema, placementSchema } from "./lib/schemas";
 import { registerPantryTools } from "./lib/webmcp";
 import type {
@@ -65,6 +73,7 @@ import type {
   Order,
   OrderItem,
   PlacementItem,
+  ProductFeedback,
 } from "./types";
 
 const CATEGORIES = ["Produce", "Dairy & eggs", "Pantry", "Frozen", "Snacks & drinks", "Household", "Other"];
@@ -423,24 +432,30 @@ function PantryPage({
       </section>
 
       {filtered.length ? (
-        <section className="pantry-shelves">
-          {shelves.map(([category, items]) => (
-            <section className="pantry-shelf" key={category}>
-              <header className="shelf-header"><h2>{category}</h2><span>{items.length} {items.length === 1 ? "item" : "items"}</span></header>
-              <div className="shelf-items">
-                {items.map((item) => (
-                  <InventoryCard
-                    key={item.id}
-                    item={item}
-                    onAdjust={(delta) => void perform(() => api.adjustInventory(item.id, delta))}
-                    onEdit={() => setEditing(item)}
-                    onDelete={() => setDeleteTarget(item)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
-        </section>
+        <>
+          <section className="pantry-shelves">
+            {shelves.map(([category, items]) => (
+              <section className="pantry-shelf" key={category}>
+                <header className="shelf-header"><h2>{category}</h2><span>{items.length} {items.length === 1 ? "item" : "items"}</span></header>
+                <div className="shelf-items">
+                  {items.map((item) => (
+                    <InventoryCard
+                      key={item.id}
+                      item={item}
+                      onAdjust={(delta) => void perform(() => api.adjustInventory(item.id, delta))}
+                      onEdit={() => setEditing(item)}
+                      onDelete={() => setDeleteTarget(item)}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </section>
+          <footer className="pantry-gesture-guide">
+            <span><Utensils /> Hold and drag any item to consume one</span>
+            <span><Plus /> Double-tap any item to add one</span>
+          </footer>
+        </>
       ) : (
         <EmptyState
           title={data.inventory.length ? "Nothing matches that view" : "Your shelves are ready"}
@@ -464,12 +479,12 @@ function PantryPage({
 
       {deleteTarget && (
         <ConfirmDialog
-          title={`Remove ${deleteTarget.name}?`}
-          message="This removes the pantry item. A manual Next Order entry with the same name will stay."
-          confirmLabel="Remove item"
+          title={`Stop tracking ${deleteTarget.name}?`}
+          message="This removes the item from your pantry; it does not mark it as consumed. A manual Next Order entry with the same name will stay."
+          confirmLabel="Stop tracking"
           onClose={() => setDeleteTarget(null)}
           onConfirm={async () => {
-            await perform(() => api.deleteInventory(deleteTarget.id), "Item removed");
+            await perform(() => api.deleteInventory(deleteTarget.id), "Stopped tracking item");
             setDeleteTarget(null);
           }}
         />
@@ -482,6 +497,13 @@ function InventoryCard({ item, onAdjust, onEdit, onDelete }: { item: InventoryIt
   const distance = dayDistance(item.expiry_date);
   const danger = item.quantity <= 0 || isExpired(item);
   const warning = isExpiringSoon(item);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [drag, setDrag] = useState<{ x: number; y: number; overTarget: boolean } | null>(null);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragging = useRef(false);
+  const lastTapAt = useRef(0);
+  const touchIdentifier = useRef<number | null>(null);
+  const consumeTarget = useRef<HTMLDivElement | null>(null);
   const expiryLabel = !item.expiry_date
     ? "No expiry"
     : distance !== null && distance < 0
@@ -492,26 +514,153 @@ function InventoryCard({ item, onAdjust, onEdit, onDelete }: { item: InventoryIt
           ? "Expires tomorrow"
           : `Expires ${formatFriendlyDate(item.expiry_date)}`;
 
+  const clearHold = () => {
+    if (holdTimer.current) clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+  };
+
+  useEffect(() => () => {
+    clearHold();
+    document.body.classList.remove("dragging-pantry-item");
+  }, []);
+
+  const overConsumeTarget = (x: number, y: number) => {
+    const bounds = consumeTarget.current?.getBoundingClientRect();
+    return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
+  };
+
+  const isNestedControl = (target: EventTarget) => target instanceof Element && Boolean(target.closest("button, input, select, textarea, a"));
+
+  const startGesture = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!event.isPrimary || event.pointerType === "touch" || isNestedControl(event.target)) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (item.quantity > 0) {
+      holdTimer.current = setTimeout(() => {
+        dragging.current = true;
+        setDrag({ x: event.clientX, y: event.clientY, overTarget: false });
+        navigator.vibrate?.(18);
+      }, 360);
+    }
+  };
+
+  const moveGesture = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType === "touch") return;
+    if (!dragging.current) return;
+    event.preventDefault();
+    setDrag({ x: event.clientX, y: event.clientY, overTarget: overConsumeTarget(event.clientX, event.clientY) });
+  };
+
+  const finishGesture = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType === "touch") return;
+    if (isNestedControl(event.target)) return;
+    clearHold();
+    if (dragging.current) {
+      if (overConsumeTarget(event.clientX, event.clientY)) {
+        onAdjust(-1);
+        navigator.vibrate?.([16, 32, 16]);
+      }
+      dragging.current = false;
+      setDrag(null);
+      return;
+    }
+    const now = Date.now();
+    if (now - lastTapAt.current < 340) {
+      onAdjust(1);
+      lastTapAt.current = 0;
+    } else {
+      lastTapAt.current = now;
+    }
+  };
+
+  const startTouchGesture = (event: ReactTouchEvent<HTMLElement>) => {
+    if (isNestedControl(event.target)) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    touchIdentifier.current = touch.identifier;
+    if (item.quantity > 0) {
+      holdTimer.current = setTimeout(() => {
+        dragging.current = true;
+        document.body.classList.add("dragging-pantry-item");
+        setDrag({ x: touch.clientX, y: touch.clientY, overTarget: false });
+        navigator.vibrate?.(18);
+      }, 360);
+    }
+  };
+
+  const moveTouchGesture = (event: ReactTouchEvent<HTMLElement>) => {
+    if (!dragging.current) return;
+    event.preventDefault();
+    const touch = Array.from(event.changedTouches).find((candidate) => candidate.identifier === touchIdentifier.current) ?? event.changedTouches[0];
+    if (!touch) return;
+    setDrag({ x: touch.clientX, y: touch.clientY, overTarget: overConsumeTarget(touch.clientX, touch.clientY) });
+  };
+
+  const finishTouchGesture = (event: ReactTouchEvent<HTMLElement>) => {
+    if (isNestedControl(event.target)) return;
+    clearHold();
+    const touch = Array.from(event.changedTouches).find((candidate) => candidate.identifier === touchIdentifier.current) ?? event.changedTouches[0];
+    if (dragging.current) {
+      if (touch && overConsumeTarget(touch.clientX, touch.clientY)) {
+        onAdjust(-1);
+        navigator.vibrate?.([16, 32, 16]);
+      }
+      dragging.current = false;
+      setDrag(null);
+      document.body.classList.remove("dragging-pantry-item");
+      touchIdentifier.current = null;
+      return;
+    }
+    const now = Date.now();
+    if (now - lastTapAt.current < 340) {
+      onAdjust(1);
+      lastTapAt.current = 0;
+    } else {
+      lastTapAt.current = now;
+    }
+    touchIdentifier.current = null;
+  };
+
   return (
-    <article className={`inventory-card ${danger ? "danger" : warning ? "warning" : ""}`}>
+    <article
+      className={`inventory-card ${danger ? "danger" : warning ? "warning" : ""}`}
+      tabIndex={0}
+      aria-label={`${item.name}, ${formatQuantity(item.quantity)} ${item.unit}. Double tap to add one. Hold and drag to consume one. Keyboard: up to add, down to consume.`}
+      onPointerDown={startGesture}
+      onPointerMove={moveGesture}
+      onPointerUp={finishGesture}
+      onPointerCancel={(event) => { if (event.pointerType !== "touch") { clearHold(); dragging.current = false; setDrag(null); } }}
+      onTouchStart={startTouchGesture}
+      onTouchMove={moveTouchGesture}
+      onTouchEnd={finishTouchGesture}
+      onTouchCancel={() => { clearHold(); dragging.current = false; touchIdentifier.current = null; setDrag(null); document.body.classList.remove("dragging-pantry-item"); }}
+      onContextMenu={(event) => { if (!isNestedControl(event.target)) event.preventDefault(); }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") { event.preventDefault(); onAdjust(1); }
+        if (event.key === "ArrowDown" && item.quantity > 0) { event.preventDefault(); onAdjust(-1); }
+      }}
+    >
       <div className="inventory-card-top">
         <div>
           <h2>{item.name}</h2>
         </div>
-        <div className="menu-actions">
-          <button className="icon-button" aria-label={`Edit ${item.name}`} onClick={onEdit}><Edit3 /></button>
-          <button className="icon-button danger-button" aria-label={`Delete ${item.name}`} onClick={onDelete}><Trash2 /></button>
+        <div className="item-menu">
+          <button className="icon-button" aria-label={`Item settings for ${item.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><MoreHorizontal /></button>
+          {menuOpen && <div className="item-menu-popover">
+            <button onClick={() => { setMenuOpen(false); onEdit(); }}><Edit3 /> Edit details</button>
+            <button className="danger-text" onClick={() => { setMenuOpen(false); onDelete(); }}><Trash2 /> Stop tracking</button>
+          </div>}
         </div>
       </div>
-      <div className="stock-row">
-        <button className="quantity-button" aria-label={`Decrease ${item.name}`} onClick={() => onAdjust(-1)} disabled={item.quantity <= 0}><Minus /></button>
-        <div className="quantity-display"><strong>{formatQuantity(item.quantity)}</strong><span>{item.unit}</span></div>
-        <button className="quantity-button" aria-label={`Increase ${item.name}`} onClick={() => onAdjust(1)}><Plus /></button>
-      </div>
+      <div className="stock-reading"><GripVertical aria-hidden="true" /><span className="quantity-display"><strong>{formatQuantity(item.quantity)}</strong><span>{item.unit}</span></span></div>
       <div className="item-meta">
         <span className={danger ? "meta-danger" : warning ? "meta-warning" : ""}><CalendarDays /> {expiryLabel}</span>
         {item.is_recurring && <span><RotateCw /> Recurring · refill to {formatQuantity(item.default_quantity)}</span>}
       </div>
+      {drag && createPortal(<div className="consume-layer" aria-hidden="true">
+        <div className="dragged-item" style={{ left: drag.x, top: drag.y }}><strong>{item.name}</strong><span>1 {item.unit}</span></div>
+        <div ref={consumeTarget} className={`consume-target ${drag.overTarget ? "ready" : ""}`}><Utensils /><div><strong>{drag.overTarget ? "Release to consume" : "Drag here to consume"}</strong><span>Uses 1 {item.unit}</span></div></div>
+      </div>, document.body)}
     </article>
   );
 }
@@ -554,7 +703,7 @@ function InventoryDialog({
   };
 
   return (
-    <Modal title={item ? "Edit pantry item" : "Add pantry item"} onClose={onClose}>
+    <Modal title={item ? "Edit item details" : "Add pantry item"} onClose={onClose}>
       <form className="form-grid" onSubmit={submit}>
         <label className="field span-2"><span>Item name</span><input name="name" autoFocus defaultValue={item?.name} placeholder="e.g. Full cream milk" /></label>
         <label className="field"><span>Category</span><select name="category" defaultValue={item?.category ?? "Pantry"}>{CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
@@ -637,7 +786,7 @@ function NextOrderPage({ context, data, activeDraft, perform, notify }: {
         <EmptyState title="The next order is clear" message="Manual additions and depleted recurring items will gather here." />
       )}
 
-      {handoff && <HandoffDialog order={handoff} onClose={() => setHandoff(null)} notify={notify} />}
+      {handoff && <HandoffDialog order={handoff} history={data.orders.filter((order) => order.status === "placed").flatMap((order) => order.order_items)} onClose={() => setHandoff(null)} notify={notify} />}
     </>
   );
 }
@@ -663,8 +812,8 @@ function NextOrderRow({ item, perform }: { item: NextOrderItem; perform: (work: 
   );
 }
 
-function HandoffDialog({ order, onClose, notify }: { order: Order; onClose: () => void; notify: (message: string, tone?: Toast["tone"]) => void }) {
-  const prompt = buildOrderPrompt(order.order_items);
+function HandoffDialog({ order, history, onClose, notify }: { order: Order; history: OrderItem[]; onClose: () => void; notify: (message: string, tone?: Toast["tone"]) => void }) {
+  const prompt = buildOrderPrompt(order.order_items, history);
   const open = async (provider: Provider) => {
     try {
       await navigator.clipboard.writeText(prompt);
@@ -698,6 +847,7 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
   const [placing, setPlacing] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
   const placed = data.orders.filter((order) => order.status === "placed");
+  const exactProducts = placed.flatMap((order) => order.order_items).filter((item) => item.bought && item.product_name);
   return (
     <>
       <PageHeader eyebrow="MONEY & HISTORY" title="Orders" />
@@ -711,6 +861,8 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
           <div className="button-row"><button className="button primary" onClick={() => setPlacing(true)}><PackageCheck /> Mark placed</button><button className="button ghost danger-text" onClick={() => setCancelTarget(activeDraft)}>Cancel order</button></div>
         </section>
       )}
+
+      {exactProducts.length > 0 && <ProductMemory items={exactProducts} perform={perform} />}
 
       <section className="section-block">
         <div className="section-title"><div><p className="eyebrow">PAST ORDERS</p><h2>Who owes what</h2></div><span>{placed.length} recorded</span></div>
@@ -727,6 +879,34 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
       }} />}
     </>
   );
+}
+
+function ProductMemory({ items, perform }: { items: OrderItem[]; perform: (work: () => Promise<void>, success?: string) => Promise<void> }) {
+  const groups = items.reduce<Map<string, { name: string; variants: Map<string, { item: OrderItem; purchases: number; feedback: ProductFeedback }> }>>((memory, item) => {
+    const group = memory.get(item.name_key) ?? { name: item.name, variants: new Map() };
+    const variantKey = [item.brand, item.product_name, item.package_size].map((value) => normaliseName(value ?? "")).join("|");
+    const variant = group.variants.get(variantKey);
+    if (variant) {
+      variant.purchases += 1;
+      if (variant.feedback === 0 && item.feedback !== 0) variant.feedback = item.feedback;
+    } else {
+      group.variants.set(variantKey, { item, purchases: 1, feedback: item.feedback });
+    }
+    memory.set(item.name_key, group);
+    return memory;
+  }, new Map());
+
+  return <section className="section-block product-memory">
+    <div className="section-title"><div><p className="eyebrow">PRODUCT MEMORY</p><h2>What this house likes</h2></div><span>{groups.size} item {groups.size === 1 ? "type" : "types"}</span></div>
+    <div className="preference-board">{Array.from(groups.entries()).map(([key, group]) => <section className="preference-group" key={key}>
+      <header><strong>{group.name}</strong><span>{group.variants.size} tried</span></header>
+      {Array.from(group.variants.values()).map((variant) => <div className="preference-variant" key={variant.item.id}>
+        <div><strong>{variant.item.product_name}</strong><span>{[variant.item.brand, variant.item.package_size, variant.purchases > 1 ? `${variant.purchases} orders` : "1 order"].filter(Boolean).join(" · ")}</span></div>
+        {variant.item.unit_price_paise !== null && <strong>{formatMoney(variant.item.unit_price_paise)}</strong>}
+        <ProductFeedbackButtons item={{ ...variant.item, feedback: variant.feedback }} perform={perform} />
+      </div>)}
+    </section>)}</div>
+  </section>;
 }
 
 type PlacementRow = PlacementItem & { key: string };
@@ -747,12 +927,18 @@ function PlaceOrderDialog({ order, members, onClose, onPlaced, notify }: {
     unit: item.unit,
     category: item.category,
     expiry_date: item.expiry_date,
+    product_name: item.product_name,
+    brand: item.brand,
+    package_size: item.package_size,
+    unit_price_paise: item.unit_price_paise,
+    line_total_paise: item.line_total_paise,
     bought: item.bought,
     source: item.source,
   });
   const [rows, setRows] = useState<PlacementRow[]>(order.order_items.map(toRow));
   const [participants, setParticipants] = useState<Set<string>>(new Set(members.map((member) => member.id)));
   const [totalRupees, setTotalRupees] = useState("");
+  const [importText, setImportText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const totalPaise = Math.round(Number(totalRupees || 0) * 100);
@@ -761,8 +947,50 @@ function PlaceOrderDialog({ order, members, onClose, onPlaced, notify }: {
   const updateRow = (key: string, patch: Partial<PlacementRow>) => setRows((current) => current.map((row) => row.key === key ? { ...row, ...patch } : row));
   const addRow = () => setRows((current) => [...current, {
     key: crypto.randomUUID(), inventory_item_id: null, next_order_item_id: null, name: "", quantity: 1,
-    unit: "pcs", category: "Other", expiry_date: addDays(new Date(), 7), bought: true, source: "ad_hoc",
+    unit: "pcs", category: "Other", expiry_date: addDays(new Date(), 7), product_name: null, brand: null,
+    package_size: null, unit_price_paise: null, line_total_paise: null, bought: true, source: "ad_hoc",
   }]);
+
+  const importAssistantResult = () => {
+    try {
+      const products = parseOrderResult(importText);
+      const usedKeys = new Set<string>();
+      setRows((current) => {
+        const next = current.map((row) => {
+          const matchIndex = products.findIndex((product, index) => !usedKeys.has(String(index)) && normaliseName(product.requestedName) === normaliseName(row.name));
+          if (matchIndex < 0) return row;
+          usedKeys.add(String(matchIndex));
+          const product = products[matchIndex];
+          return {
+            ...row,
+            product_name: product.productName,
+            brand: product.brand,
+            package_size: product.packageSize,
+            quantity: product.quantity,
+            unit: product.unit,
+            unit_price_paise: product.unitPrice === null ? null : Math.round(product.unitPrice * 100),
+            line_total_paise: product.lineTotal === null ? null : Math.round(product.lineTotal * 100),
+            bought: true,
+          };
+        });
+        const unmatched = products.filter((_product, index) => !usedKeys.has(String(index))).map((product) => ({
+          key: crypto.randomUUID(), inventory_item_id: null, next_order_item_id: null, name: product.requestedName,
+          quantity: product.quantity, unit: product.unit, category: "Other", expiry_date: addDays(new Date(), 7),
+          product_name: product.productName, brand: product.brand, package_size: product.packageSize,
+          unit_price_paise: product.unitPrice === null ? null : Math.round(product.unitPrice * 100),
+          line_total_paise: product.lineTotal === null ? null : Math.round(product.lineTotal * 100),
+          bought: true, source: "ad_hoc" as const,
+        }));
+        return [...next, ...unmatched];
+      });
+      const resultTotal = products.reduce((sum, product) => sum + (product.lineTotal ?? (product.unitPrice === null ? 0 : product.unitPrice * product.quantity)), 0);
+      if (resultTotal > 0) setTotalRupees(resultTotal.toFixed(2));
+      setError(null);
+      notify(`${products.length} exact ${products.length === 1 ? "product" : "products"} imported`, "success");
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
 
   const submit = async () => {
     const payload = { totalPaise, participantIds: [...participants], items: rows.map(({ key: _key, ...row }) => row) };
@@ -781,19 +1009,40 @@ function PlaceOrderDialog({ order, members, onClose, onPlaced, notify }: {
 
   return (
     <Modal title="Review placed order" onClose={onClose} wide>
-      <p className="dialog-lead">Confirm what came home. These quantities and expiry dates will update the pantry.</p>
+      <p className="dialog-lead">Confirm what came home. Pantry item names drive stock; exact products, brands, sizes, and prices build your household’s preferences.</p>
+      <details className="assistant-import">
+        <summary><FileInput /> Import the assistant’s exact products</summary>
+        <p>Paste the <strong>PANTRYHOUSE_ORDER_RESULT</strong> block from ChatGPT or Claude. You can also fill the product fields below by hand.</p>
+        <textarea value={importText} onChange={(event) => setImportText(event.target.value)} placeholder='[{"requestedName":"milk","productName":"Amul Taaza Toned Milk","brand":"Amul",...}]' />
+        <button className="button secondary" disabled={!importText.trim()} onClick={importAssistantResult}><FileInput /> Import products</button>
+      </details>
       <div className="placement-list">
         <div className="placement-heading"><span>Final items</span><button className="button ghost compact-button" onClick={addRow}><Plus /> Add ad-hoc item</button></div>
         {rows.map((row) => (
-          <div className={`placement-row ${!row.bought ? "skipped" : ""}`} key={row.key}>
-            <label className="check-control"><input type="checkbox" checked={row.bought} onChange={(event) => updateRow(row.key, { bought: event.target.checked })} /><span>{row.bought ? "Bought" : "Skipped"}</span></label>
-            <label className="field item-name"><span>Item</span><input value={row.name} onChange={(event) => updateRow(row.key, { name: event.target.value })} /></label>
-            <label className="field small-input"><span>Qty</span><input type="number" min="0.01" step="0.01" value={row.quantity} onChange={(event) => updateRow(row.key, { quantity: Number(event.target.value) })} /></label>
-            <label className="field small-input"><span>Unit</span><input value={row.unit} onChange={(event) => updateRow(row.key, { unit: event.target.value })} /></label>
-            <label className="field category-input"><span>Category</span><select value={row.category} onChange={(event) => updateRow(row.key, { category: event.target.value })}>{CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-            <label className="field date-input"><span>Expiry</span><input type="date" value={row.expiry_date ?? ""} onChange={(event) => updateRow(row.key, { expiry_date: event.target.value || null })} /></label>
-            {row.source === "ad_hoc" && <button className="icon-button danger-button placement-remove" aria-label={`Remove ${row.name || "new item"}`} onClick={() => setRows((current) => current.filter((item) => item.key !== row.key))}><Trash2 /></button>}
-          </div>
+          <article className={`placement-row ${!row.bought ? "skipped" : ""}`} key={row.key}>
+            <header className="placement-row-header">
+              <label className="check-control"><input type="checkbox" checked={row.bought} onChange={(event) => updateRow(row.key, { bought: event.target.checked })} /><span>{row.bought ? "Bought" : "Skipped"}</span></label>
+              <strong>{row.product_name || row.name || "New item"}</strong>
+              {row.source === "ad_hoc" && <button className="icon-button danger-button placement-remove" aria-label={`Remove ${row.name || "new item"}`} onClick={() => setRows((current) => current.filter((item) => item.key !== row.key))}><Trash2 /></button>}
+            </header>
+            <div className="placement-fields">
+              <label className="field pantry-name"><span>Pantry item type</span><input value={row.name} onChange={(event) => updateRow(row.key, { name: event.target.value })} placeholder="Milk" /></label>
+              <label className="field product-name"><span>Exact product</span><input value={row.product_name ?? ""} onChange={(event) => updateRow(row.key, { product_name: event.target.value || null })} placeholder="Amul Taaza Toned Milk" /></label>
+              <label className="field brand-input"><span>Brand</span><input value={row.brand ?? ""} onChange={(event) => updateRow(row.key, { brand: event.target.value || null })} placeholder="Amul" /></label>
+              <label className="field pack-input"><span>Pack size</span><input value={row.package_size ?? ""} onChange={(event) => updateRow(row.key, { package_size: event.target.value || null })} placeholder="1 L" /></label>
+              <label className="field quantity-input"><span>Qty</span><input type="number" min="0.01" step="0.01" value={row.quantity} onChange={(event) => {
+                const quantity = Number(event.target.value);
+                updateRow(row.key, { quantity, line_total_paise: row.unit_price_paise === null ? row.line_total_paise : Math.round(row.unit_price_paise * quantity) });
+              }} /></label>
+              <label className="field unit-input"><span>Unit</span><input value={row.unit} onChange={(event) => updateRow(row.key, { unit: event.target.value })} /></label>
+              <label className="field price-input"><span>Unit price</span><div className="currency-input"><span>₹</span><input type="number" min="0" step="0.01" value={row.unit_price_paise === null ? "" : (row.unit_price_paise / 100).toFixed(2)} onChange={(event) => {
+                const value = event.target.value === "" ? null : Math.round(Number(event.target.value) * 100);
+                updateRow(row.key, { unit_price_paise: value, line_total_paise: value === null ? null : Math.round(value * row.quantity) });
+              }} /></div></label>
+              <label className="field category-input"><span>Category</span><select value={row.category} onChange={(event) => updateRow(row.key, { category: event.target.value })}>{CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
+              <label className="field date-input"><span>Expiry</span><input type="date" value={row.expiry_date ?? ""} onChange={(event) => updateRow(row.key, { expiry_date: event.target.value || null })} /></label>
+            </div>
+          </article>
         ))}
       </div>
       <div className="split-panel">
@@ -828,7 +1077,11 @@ function OrderHistoryCard({ order, currentMember, perform }: { order: Order; cur
       </button>
       {expanded && (
         <div className="history-details">
-          <div className="bought-list">{order.order_items.filter((item) => item.bought).map((item) => <span key={item.id}>{item.name} <small>{formatQuantity(item.quantity)} {item.unit}</small></span>)}</div>
+          <div className="product-history-list">{order.order_items.filter((item) => item.bought).map((item) => <div className="product-history-item" key={item.id}>
+            <div><strong>{item.product_name || item.name}</strong><span>{[item.brand, item.package_size, `${formatQuantity(item.quantity)} ${item.unit}`, item.product_name ? `tagged ${item.name}` : null].filter(Boolean).join(" · ")}</span></div>
+            {item.line_total_paise !== null || item.unit_price_paise !== null ? <strong>{formatMoney(item.line_total_paise ?? item.unit_price_paise)}</strong> : <span className="price-missing">No price</span>}
+            <ProductFeedbackButtons item={item} perform={perform} />
+          </div>)}</div>
           <div className="split-list">
             {order.order_splits.map((split) => (
               <div className="split-row" key={split.member_id}>
@@ -844,6 +1097,13 @@ function OrderHistoryCard({ order, currentMember, perform }: { order: Order; cur
       )}
     </article>
   );
+}
+
+function ProductFeedbackButtons({ item, perform }: { item: OrderItem; perform: (work: () => Promise<void>, success?: string) => Promise<void> }) {
+  return <div className="product-feedback" role="group" aria-label={`Rate ${item.product_name || item.name}`}>
+    <button className={item.feedback === 1 ? "active positive" : ""} aria-pressed={item.feedback === 1} aria-label={`Like ${item.product_name || item.name}`} onClick={() => void perform(() => api.rateOrderItem(item.id, (item.feedback === 1 ? 0 : 1) as ProductFeedback), item.feedback === 1 ? "Product rating cleared" : "We’ll prefer this product next time")}><ThumbsUp /></button>
+    <button className={item.feedback === -1 ? "active negative" : ""} aria-pressed={item.feedback === -1} aria-label={`Dislike ${item.product_name || item.name}`} onClick={() => void perform(() => api.rateOrderItem(item.id, (item.feedback === -1 ? 0 : -1) as ProductFeedback), item.feedback === -1 ? "Product rating cleared" : "We’ll avoid this product next time")}><ThumbsDown /></button>
+  </div>;
 }
 
 function HouseholdPage({ context, data, onContextChange, notify }: {
@@ -914,12 +1174,46 @@ function NavItem({ to, icon, label, badge, compact = false }: { to: string; icon
 }
 
 function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+  const [viewport, setViewport] = useState(() => ({
+    height: window.visualViewport?.height ?? window.innerHeight,
+    offsetTop: window.visualViewport?.offsetTop ?? 0,
+  }));
   useEffect(() => {
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const syncViewport = () => setViewport({
+      height: window.visualViewport?.height ?? window.innerHeight,
+      offsetTop: window.visualViewport?.offsetTop ?? 0,
+    });
     window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
+    window.addEventListener("resize", syncViewport);
+    window.visualViewport?.addEventListener("resize", syncViewport);
+    window.visualViewport?.addEventListener("scroll", syncViewport);
+    document.body.classList.add("modal-open");
+    return () => {
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("resize", syncViewport);
+      window.visualViewport?.removeEventListener("resize", syncViewport);
+      window.visualViewport?.removeEventListener("scroll", syncViewport);
+      document.body.classList.remove("modal-open");
+    };
   }, [onClose]);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}><header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Close dialog"><X /></button></header><div className="modal-body">{children}</div></section></div>;
+  return createPortal(
+    <div
+      className="modal-backdrop"
+      style={{ "--modal-viewport-height": `${viewport.height}px`, "--modal-viewport-offset": `${viewport.offsetTop}px` } as React.CSSProperties}
+      role="presentation"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <section className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+        <header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Close dialog"><X /></button></header>
+        <div className="modal-body" onFocusCapture={(event) => {
+          const target = event.target as HTMLElement;
+          window.setTimeout(() => target.scrollIntoView({ block: "nearest", behavior: "smooth" }), 120);
+        }}>{children}</div>
+      </section>
+    </div>,
+    document.body,
+  );
 }
 
 function ConfirmDialog({ title, message, confirmLabel, onClose, onConfirm }: { title: string; message: string; confirmLabel: string; onClose: () => void; onConfirm: () => Promise<void> }) {

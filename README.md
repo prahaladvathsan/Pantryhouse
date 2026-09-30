@@ -6,10 +6,11 @@ A mobile-first shared pantry, grocery-order, and expense-split app for flatmates
 
 ## What is included
 
-- Shared inventory with quantity controls, expiry warnings, search, and filters
+- Shared inventory with whole-card consumption/restock gestures, expiry warnings, search, and filters
 - Automatic restocking for empty or expired recurring items
 - Collaborative Next Order list with name-based deduplication
-- ChatGPT and Claude cart hand-off with a copy-first fallback
+- ChatGPT and Claude cart hand-off with learned product preferences and a copy-first fallback
+- Exact purchased-product history with brand, pack size, price, and thumbs up/down feedback
 - Transactional placed-order review, pantry update, equal splits, and settlement tracking
 - Invite-link household access through Supabase anonymous sessions
 - Household-scoped row-level security and realtime refreshes
@@ -37,7 +38,7 @@ Without environment variables, the app opens the seeded demo. Demo changes last 
    npx supabase db push
    ```
 
-   This includes the initial schema and the follow-up trigger-function security fix.
+   This includes the initial schema, the trigger-function security fix, and the product-history migration.
 
 4. Copy `.env.example` to `.env.local` and fill in the project URL and publishable key.
 5. Restart the development server.
@@ -81,6 +82,8 @@ The production deployment currently lives at [prahaladvathsan.github.io/Pantryho
 - The invite link is the household key. Anyone with it can join or select an existing member identity.
 - Anonymous sessions are device-local. If browser data is cleared, use the invite link to rejoin.
 - AI web-prefill URLs are best-effort. Pantryhouse copies the prompt before opening the provider, so the list can always be pasted manually.
+- External ChatGPT and Claude tabs cannot silently write back into Pantryhouse. The prompt asks for a structured `PANTRYHOUSE_ORDER_RESULT`; paste that block into the placed-order review to import exact products and prices.
+- Product feedback is retained against the pantry item type. Liked, disliked, and most recently purchased products are included in future order prompts immediately.
 - Pantryhouse does not directly operate Swiggy or Instamart. The v1 integration is a copy-and-open hand-off; direct cart automation depends on official external support.
 - Expense splitting is equal-only in v1; the payer’s own share is marked settled automatically.
 

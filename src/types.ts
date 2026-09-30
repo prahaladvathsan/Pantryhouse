@@ -1,5 +1,7 @@
 export type UUID = string;
 
+export type ProductFeedback = -1 | 0 | 1;
+
 export type Household = {
   id: UUID;
   name: string;
@@ -63,6 +65,12 @@ export type OrderItem = {
   unit: string;
   category: string;
   expiry_date: string | null;
+  product_name: string | null;
+  brand: string | null;
+  package_size: string | null;
+  unit_price_paise: number | null;
+  line_total_paise: number | null;
+  feedback: ProductFeedback;
   bought: boolean;
   source: "next_order" | "ad_hoc";
 };
@@ -102,7 +110,20 @@ export type InventoryInput = Pick<
 
 export type PlacementItem = Pick<
   OrderItem,
-  "inventory_item_id" | "next_order_item_id" | "name" | "quantity" | "unit" | "category" | "expiry_date" | "bought" | "source"
+  | "inventory_item_id"
+  | "next_order_item_id"
+  | "name"
+  | "quantity"
+  | "unit"
+  | "category"
+  | "expiry_date"
+  | "product_name"
+  | "brand"
+  | "package_size"
+  | "unit_price_paise"
+  | "line_total_paise"
+  | "bought"
+  | "source"
 >;
 
 export type PlacementInput = {
@@ -138,5 +159,6 @@ export interface PantryApi {
   startOrder(householdId: UUID): Promise<UUID>;
   cancelOrder(orderId: UUID): Promise<void>;
   placeOrder(input: PlacementInput): Promise<void>;
+  rateOrderItem(orderItemId: UUID, feedback: ProductFeedback): Promise<void>;
   setSplitSettled(orderId: UUID, memberId: UUID, settled: boolean): Promise<void>;
 }
