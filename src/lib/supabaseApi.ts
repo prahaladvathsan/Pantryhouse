@@ -5,6 +5,7 @@ import type {
   InventoryInput,
   InvitePreview,
   Order,
+  OrderHandoff,
   PantryApi,
   PlacementInput,
   UUID,
@@ -138,6 +139,9 @@ export const createSupabaseApi = (): PantryApi => {
     },
     async startOrder(householdId) {
       return requiredRpc<UUID>("start_order", { p_household_id: householdId });
+    },
+    async createOrderHandoff(orderId) {
+      return requiredRpc<OrderHandoff>("create_order_handoff", { p_order_id: orderId });
     },
     async cancelOrder(orderId) {
       await rpc("cancel_order", { p_order_id: orderId });

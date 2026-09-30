@@ -60,7 +60,7 @@ import {
   normaliseName,
   splitPaise,
 } from "./lib/domain";
-import { buildOrderPrompt, parseOrderResult, providerUrl, type Provider } from "./lib/providers";
+import { buildOrderPrompt, pantryhouseConnectorUrl, parseOrderResult, providerUrl, type Provider } from "./lib/providers";
 import { householdSchema, inventorySchema, manualOrderSchema, placementSchema } from "./lib/schemas";
 import { registerPantryTools } from "./lib/webmcp";
 import type {
@@ -762,8 +762,8 @@ function NextOrderPage({ context, data, activeDraft, perform, notify }: {
       <PageHeader eyebrow="THE NEXT RUN" title="Next order" action={<button className="button primary" onClick={() => void start()} disabled={!visible.length && !activeDraft}><ShoppingCart /> {activeDraft ? "Open order" : "Start order"}</button>} />
       {activeDraft && (
         <section className="draft-banner">
-          <div className="draft-icon"><Clock3 /></div>
-          <div><strong>An order is in progress</strong><span>Started {relativeTime(activeDraft.started_at)} · new additions stay in the next run</span></div>
+          <div className="draft-icon">{activeDraft.assistant_capture_received_at ? <Sparkles /> : <Clock3 />}</div>
+          <div><strong>{activeDraft.assistant_capture_received_at ? "Claude’s products are ready" : "An order is in progress"}</strong><span>{activeDraft.assistant_capture_received_at ? `${activeDraft.order_items.filter((item) => item.bought && item.product_name).length} exact products received · review before confirming` : `Started ${relativeTime(activeDraft.started_at)} · new additions stay in the next run`}</span></div>
           <button className="button secondary" onClick={() => navigate("/orders")}>Review order</button>
         </section>
       )}
@@ -813,26 +813,51 @@ function NextOrderRow({ item, perform }: { item: NextOrderItem; perform: (work: 
 }
 
 function HandoffDialog({ order, history, onClose, notify }: { order: Order; history: OrderItem[]; onClose: () => void; notify: (message: string, tone?: Toast["tone"]) => void }) {
-  const prompt = buildOrderPrompt(order.order_items, history);
+  const fallbackPrompt = buildOrderPrompt(order.order_items, history);
+  const [prompt, setPrompt] = useState(fallbackPrompt);
+  const [opening, setOpening] = useState<Provider | null>(null);
   const open = async (provider: Provider) => {
+    setOpening(provider);
     try {
-      await navigator.clipboard.writeText(prompt);
-      window.location.href = providerUrl(provider, prompt);
-      notify("List copied. Paste it if the prompt does not appear.", "info");
+      const nextPrompt = provider === "claude" && !api.isDemo
+        ? buildOrderPrompt(order.order_items, history, await api.createOrderHandoff(order.id))
+        : fallbackPrompt;
+      setPrompt(nextPrompt);
+      try {
+        await navigator.clipboard.writeText(nextPrompt);
+        notify(provider === "claude" && !api.isDemo ? "Secure return enabled for this order." : "List copied. Paste it if the prompt does not appear.", "info");
+      } catch {
+        notify("Couldn’t copy automatically. Select and copy the prompt below.", "error");
+      }
+      window.location.href = providerUrl(provider, nextPrompt);
+    } catch (cause) {
+      notify(messageOf(cause), "error");
+      setOpening(null);
+    }
+  };
+  const copyConnectorUrl = async () => {
+    if (!pantryhouseConnectorUrl) return;
+    try {
+      await navigator.clipboard.writeText(pantryhouseConnectorUrl);
+      notify("Connector URL copied");
     } catch {
-      notify("Couldn’t copy automatically. Select and copy the prompt below.", "error");
+      notify("Couldn’t copy the connector URL.", "error");
     }
   };
   return (
     <Modal title="Hand off your order" onClose={onClose} wide>
-      <p className="dialog-lead">We’ll copy the list first, then try to open it in a new chat. Review the cart before paying.</p>
+      <p className="dialog-lead">Claude can send the exact cart back to this draft automatically. You will still review it before Pantryhouse records the order.</p>
+      {pantryhouseConnectorUrl && <section className="connector-setup">
+        <div><Sparkles /><span><strong>One-time Claude setup</strong><small>In Claude, open Settings → Connectors → Add custom connector, paste this URL, and enable Pantryhouse in the shopping chat.</small></span></div>
+        <div className="connector-url"><input readOnly value={pantryhouseConnectorUrl} onFocus={(event) => event.currentTarget.select()} /><button className="button secondary compact-button" onClick={() => void copyConnectorUrl()}><Copy /> Copy URL</button></div>
+      </section>}
       <div className="provider-grid">
-        <button className="provider-card chatgpt" onClick={() => void open("chatgpt")}><span className="provider-icon">◎</span><span><strong>Open ChatGPT</strong><small>Experimental web prefill</small></span><ExternalLink /></button>
-        <button className="provider-card claude" onClick={() => void open("claude")}><span className="provider-icon">AI</span><span><strong>Open Claude</strong><small>Experimental web prefill</small></span><ExternalLink /></button>
+        <button className="provider-card chatgpt" disabled={opening !== null} onClick={() => void open("chatgpt")}><span className="provider-icon">◎</span><span><strong>Open ChatGPT</strong><small>Copy-and-import fallback</small></span>{opening === "chatgpt" ? <Loader2 className="spin" /> : <ExternalLink />}</button>
+        <button className="provider-card claude" disabled={opening !== null} onClick={() => void open("claude")}><span className="provider-icon">AI</span><span><strong>Open Claude</strong><small>{api.isDemo ? "Copy-and-import demo" : "Direct, secure return"}</small></span>{opening === "claude" ? <Loader2 className="spin" /> : <ExternalLink />}</button>
       </div>
-      <button className="text-button" onClick={() => void open("chatgpt-desktop")}><Bot /> Open in the ChatGPT desktop app instead</button>
+      <button className="text-button" disabled={opening !== null} onClick={() => void open("chatgpt-desktop")}><Bot /> Open in the ChatGPT desktop app instead</button>
       <label className="prompt-preview"><span>Copied prompt</span><textarea readOnly value={prompt} onFocus={(event) => event.currentTarget.select()} /></label>
-      <div className="info-callout"><Clipboard /><span>If the new chat opens empty, paste the copied list into the composer.</span></div>
+      <div className="info-callout"><Clipboard /><span>The order code expires after two hours and can update only this draft. If the connector is unavailable, Claude will provide the existing pasteable fallback.</span></div>
     </Modal>
   );
 }
@@ -848,17 +873,18 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
   const placed = data.orders.filter((order) => order.status === "placed");
   const exactProducts = placed.flatMap((order) => order.order_items).filter((item) => item.bought && item.product_name);
+  const capturedProducts = activeDraft?.order_items.filter((item) => item.bought && item.product_name).length ?? 0;
   return (
     <>
       <PageHeader eyebrow="MONEY & HISTORY" title="Orders" />
       {activeDraft && (
-        <section className="active-order-card">
+        <section className={`active-order-card ${activeDraft.assistant_capture_received_at ? "capture-ready" : ""}`}>
           <div className="active-order-header">
-            <div><span className="status-pill">IN PROGRESS</span><h2>Current grocery order</h2><p>{activeDraft.order_items.length} items · started {relativeTime(activeDraft.started_at)}</p></div>
-            <ShoppingCart size={42} />
+            <div><span className="status-pill">{activeDraft.assistant_capture_received_at ? "READY TO REVIEW" : "IN PROGRESS"}</span><h2>{activeDraft.assistant_capture_received_at ? "Claude sent the exact products" : "Current grocery order"}</h2><p>{activeDraft.assistant_capture_received_at ? `${capturedProducts} products received ${relativeTime(activeDraft.assistant_capture_received_at)}` : `${activeDraft.order_items.length} items · started ${relativeTime(activeDraft.started_at)}`}</p></div>
+            {activeDraft.assistant_capture_received_at ? <Sparkles size={42} /> : <ShoppingCart size={42} />}
           </div>
-          <div className="item-chip-list">{activeDraft.order_items.slice(0, 6).map((item) => <span key={item.id}>{item.name} · {formatQuantity(item.quantity)} {item.unit}</span>)}</div>
-          <div className="button-row"><button className="button primary" onClick={() => setPlacing(true)}><PackageCheck /> Mark placed</button><button className="button ghost danger-text" onClick={() => setCancelTarget(activeDraft)}>Cancel order</button></div>
+          <div className="item-chip-list">{activeDraft.order_items.filter((item) => item.bought).slice(0, 6).map((item) => <span key={item.id}>{item.product_name || item.name} · {formatQuantity(item.quantity)} {item.unit}</span>)}</div>
+          <div className="button-row"><button className="button primary" onClick={() => setPlacing(true)}>{activeDraft.assistant_capture_received_at ? <Sparkles /> : <PackageCheck />} {activeDraft.assistant_capture_received_at ? "Review products" : "Mark placed"}</button><button className="button ghost danger-text" onClick={() => setCancelTarget(activeDraft)}>Cancel order</button></div>
         </section>
       )}
 
@@ -937,7 +963,7 @@ function PlaceOrderDialog({ order, members, onClose, onPlaced, notify }: {
   });
   const [rows, setRows] = useState<PlacementRow[]>(order.order_items.map(toRow));
   const [participants, setParticipants] = useState<Set<string>>(new Set(members.map((member) => member.id)));
-  const [totalRupees, setTotalRupees] = useState("");
+  const [totalRupees, setTotalRupees] = useState(order.assistant_capture_total_amount_paise === null ? "" : (order.assistant_capture_total_amount_paise / 100).toFixed(2));
   const [importText, setImportText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1010,6 +1036,7 @@ function PlaceOrderDialog({ order, members, onClose, onPlaced, notify }: {
   return (
     <Modal title="Review placed order" onClose={onClose} wide>
       <p className="dialog-lead">Confirm what came home. Pantry item names drive stock; exact products, brands, sizes, and prices build your household’s preferences.</p>
+      {order.assistant_capture_received_at && <div className="capture-callout"><Sparkles /><span><strong>Received directly from Claude</strong><small>Check the products and prices below. Nothing enters pantry history until you confirm.</small></span></div>}
       <details className="assistant-import">
         <summary><FileInput /> Import the assistant’s exact products</summary>
         <p>Paste the <strong>PANTRYHOUSE_ORDER_RESULT</strong> block from ChatGPT or Claude. You can also fill the product fields below by hand.</p>

@@ -92,8 +92,16 @@ export type Order = {
   started_at: string;
   placed_at: string | null;
   cancelled_at: string | null;
+  assistant_capture_received_at: string | null;
+  assistant_capture_total_amount_paise: number | null;
   order_items: OrderItem[];
   order_splits: OrderSplit[];
+};
+
+export type OrderHandoff = {
+  orderId: UUID;
+  code: string;
+  expiresAt: string;
 };
 
 export type DashboardData = {
@@ -157,6 +165,7 @@ export interface PantryApi {
   updateNextOrder(id: UUID, quantity: number, unit: string): Promise<void>;
   dismissNextOrder(id: UUID): Promise<void>;
   startOrder(householdId: UUID): Promise<UUID>;
+  createOrderHandoff(orderId: UUID): Promise<OrderHandoff>;
   cancelOrder(orderId: UUID): Promise<void>;
   placeOrder(input: PlacementInput): Promise<void>;
   rateOrderItem(orderItemId: UUID, feedback: ProductFeedback): Promise<void>;

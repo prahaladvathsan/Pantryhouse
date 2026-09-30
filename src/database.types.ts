@@ -36,9 +36,9 @@ export type Database = {
         Relationships: [];
       };
       orders: {
-        Row: { id: string; household_id: string; status: Database["public"]["Enums"]["order_status"]; placed_by_member_id: string; total_amount_paise: number | null; started_at: string; placed_at: string | null; cancelled_at: string | null; updated_at: string };
-        Insert: { id?: string; household_id: string; status?: Database["public"]["Enums"]["order_status"]; placed_by_member_id: string; total_amount_paise?: number | null; started_at?: string; placed_at?: string | null; cancelled_at?: string | null; updated_at?: string };
-        Update: { status?: Database["public"]["Enums"]["order_status"]; total_amount_paise?: number | null; placed_at?: string | null; cancelled_at?: string | null; updated_at?: string };
+        Row: { id: string; household_id: string; status: Database["public"]["Enums"]["order_status"]; placed_by_member_id: string; total_amount_paise: number | null; started_at: string; placed_at: string | null; cancelled_at: string | null; assistant_capture_received_at: string | null; assistant_capture_total_amount_paise: number | null; updated_at: string };
+        Insert: { id?: string; household_id: string; status?: Database["public"]["Enums"]["order_status"]; placed_by_member_id: string; total_amount_paise?: number | null; started_at?: string; placed_at?: string | null; cancelled_at?: string | null; assistant_capture_received_at?: string | null; assistant_capture_total_amount_paise?: number | null; updated_at?: string };
+        Update: { status?: Database["public"]["Enums"]["order_status"]; total_amount_paise?: number | null; placed_at?: string | null; cancelled_at?: string | null; assistant_capture_received_at?: string | null; assistant_capture_total_amount_paise?: number | null; updated_at?: string };
         Relationships: [];
       };
       order_items: {
@@ -66,6 +66,8 @@ export type Database = {
       add_manual_next_order: { Args: { p_household_id: string; p_name: string; p_quantity: number; p_unit: string }; Returns: string };
       dismiss_next_order_item: { Args: { p_item_id: string }; Returns: undefined };
       start_order: { Args: { p_household_id: string }; Returns: string };
+      create_order_handoff: { Args: { p_order_id: string }; Returns: Json };
+      submit_order_capture: { Args: { p_order_id: string; p_code: string; p_total_amount_paise: number | null; p_items: Json }; Returns: Json };
       cancel_order: { Args: { p_order_id: string }; Returns: undefined };
       place_order: { Args: { p_order_id: string; p_total_amount_paise: number; p_participant_ids: string[]; p_items: Json }; Returns: undefined };
       rate_order_item: { Args: { p_order_item_id: string; p_feedback: number }; Returns: undefined };

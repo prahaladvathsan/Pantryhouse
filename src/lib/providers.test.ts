@@ -50,4 +50,19 @@ describe("assistant order handoff", () => {
       lineTotal: 130,
     }]);
   });
+
+  it("builds a single-use direct connector handoff", () => {
+    const requested = item();
+    const prompt = buildOrderPrompt([requested], [], {
+      orderId: "11111111-1111-4111-8111-111111111111",
+      code: "a".repeat(64),
+      expiresAt: new Date().toISOString(),
+    });
+
+    expect(prompt).toContain(`Pantryhouse requestedItemId: ${requested.id}`);
+    expect(prompt).toContain("call the Pantryhouse connector tool record_order_result exactly once");
+    expect(prompt).toContain("orderId 11111111-1111-4111-8111-111111111111");
+    expect(prompt).toContain(`orderCode ${"a".repeat(64)}`);
+    expect(prompt).toContain("If the Pantryhouse connector is unavailable");
+  });
 });
