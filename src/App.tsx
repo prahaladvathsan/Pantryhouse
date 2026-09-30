@@ -759,7 +759,7 @@ function NextOrderPage({ context, data, activeDraft, perform, notify }: {
 
   return (
     <>
-      <PageHeader eyebrow="THE NEXT RUN" title="Next order" action={<button className="button primary" onClick={() => void start()} disabled={!visible.length && !activeDraft}><ShoppingCart /> {activeDraft ? "Open order" : "Start order"}</button>} />
+      <PageHeader title="Ready to order?" action={<button className="button primary" onClick={() => void start()} disabled={!visible.length && !activeDraft}><ShoppingCart /> {activeDraft ? "Open order" : "Start order"}</button>} />
       {activeDraft && (
         <section className="draft-banner">
           <div className="draft-icon">{activeDraft.assistant_capture_received_at ? <Sparkles /> : <Clock3 />}</div>
@@ -876,7 +876,7 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
   const capturedProducts = activeDraft?.order_items.filter((item) => item.bought && item.product_name).length ?? 0;
   return (
     <>
-      <PageHeader eyebrow="MONEY & HISTORY" title="Orders" />
+      <PageHeader title="Past orders (and splits)" />
       {activeDraft && (
         <section className={`active-order-card ${activeDraft.assistant_capture_received_at ? "capture-ready" : ""}`}>
           <div className="active-order-header">
@@ -891,7 +891,6 @@ function OrdersPage({ context, data, activeDraft, perform, notify }: {
       {exactProducts.length > 0 && <ProductMemory items={exactProducts} perform={perform} />}
 
       <section className="section-block">
-        <div className="section-title"><div><p className="eyebrow">PAST ORDERS</p><h2>Who owes what</h2></div><span>{placed.length} recorded</span></div>
         {placed.length ? <div className="history-list">{placed.map((order) => <OrderHistoryCard key={order.id} order={order} currentMember={context.member} perform={perform} />)}</div> : <EmptyState title="No placed orders yet" message="Completed grocery runs and their expense splits will appear here." />}
       </section>
 
@@ -1182,8 +1181,8 @@ function HouseholdPage({ context, data, onContextChange, notify }: {
   );
 }
 
-function PageHeader({ eyebrow, title, action }: { eyebrow: string; title: string; action?: ReactNode }) {
-  return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1></div>{action}</header>;
+function PageHeader({ eyebrow, title, action }: { eyebrow?: string; title: string; action?: ReactNode }) {
+  return <header className="page-header"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1></div>{action}</header>;
 }
 
 function EmptyState({ title, message, action }: { title: string; message: string; action?: ReactNode }) {
